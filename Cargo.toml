@@ -14,7 +14,7 @@ clap_derive = "4.5.3"
 rust-htslib = "0.49.0"
 bio = "2.3.0"
 anyhow = "1.0.102"
-varlociraptor = "8.9.3"
+varlociraptor = "8.9.5"
 petgraph = { version = "0.8.3", features = ["serde-1"]}
 itertools = "0.15.0"
 serde = { version = "1.0.228", features = ["derive"] }
