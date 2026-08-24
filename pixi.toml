@@ -1,11 +1,11 @@
 [workspace]
-name = "predictosaurus"
+name = "haplodon"
 channels = ["conda-forge", "bioconda"]
 platforms = ["linux-64", "osx-64", "osx-arm64"]
 version = "0.7.2"
 description = "Uncertainty aware haplotype-based genomic variant effect prediction"
 license = "MIT"
-repository = "https://github.com/fxwiegand/predictosaurus"
+repository = "https://github.com/fxwiegand/haplodon"
 
 [dependencies]
 rust = ">=1.72"

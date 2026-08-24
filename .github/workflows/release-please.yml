@@ -17,7 +17,7 @@ jobs:
         id: release
         with:
           release-type: rust
-          package-name: predictosaurus
+          package-name: haplodon
 
   publish:
     runs-on: ubuntu-latest

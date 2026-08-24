@@ -1522,6 +1522,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "haplodon"
+version = "0.16.0"
+dependencies = [
+ "anyhow",
+ "bio",
+ "clap 4.6.6",
+ "clap_derive",
+ "csv",
+ "duckdb",
+ "env_logger",
+ "genebears",
+ "itertools 0.15.0",
+ "json5",
+ "log",
+ "petgraph 0.8.3",
+ "rayon",
+ "rust-htslib",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "varlociraptor",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2731,31 +2756,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77957b295656769bb8ad2b6a6b09d897d94f05c41b069aede1fcdaa675eaea04"
 dependencies = [
  "zerocopy",
-]
-
-[[package]]
-name = "predictosaurus"
-version = "0.16.0"
-dependencies = [
- "anyhow",
- "bio",
- "clap 4.6.6",
- "clap_derive",
- "csv",
- "duckdb",
- "env_logger",
- "genebears",
- "itertools 0.15.0",
- "json5",
- "log",
- "petgraph 0.8.3",
- "rayon",
- "rust-htslib",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "varlociraptor",
 ]
 
 [[package]]
