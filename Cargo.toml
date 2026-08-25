@@ -1,6 +1,6 @@
 [package]
 name = "haplodon"
-version = "0.16.0"
+version = "0.17.0"
 description = "Uncertainty aware haplotype based genomic variant effect prediction"
 license = "MIT"
 authors = ["Felix Wiegand <felix.wiegand@tu-dortmund.de>", "Johannes Köster <johannes.koester@tu-dortmund.de>"]
