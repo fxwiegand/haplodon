@@ -1,4 +1,4 @@
-use crate::cli::{Command, GeneBeCredentials, Predictosaurus};
+use crate::cli::{Command, GeneBeCredentials, Haplodon};
 use crate::graph::duck::{create_scores, read_scores, write_graphs, write_scores};
 use crate::graph::peptide::write_peptides;
 use crate::graph::transcript::transcripts;
@@ -25,7 +25,7 @@ mod translation;
 mod utils;
 
 fn main() -> Result<()> {
-    let args = Predictosaurus::parse();
+    let args = Haplodon::parse();
     let log_level = if args.verbose { "info" } else { "off" };
     env_logger::Builder::from_env(Env::default().default_filter_or(log_level)).init();
     if let Some(n) = args.threads {

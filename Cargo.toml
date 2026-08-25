@@ -1,5 +1,5 @@
 [package]
-name = "predictosaurus"
+name = "haplodon"
 version = "0.16.0"
 description = "Uncertainty aware haplotype based genomic variant effect prediction"
 license = "MIT"

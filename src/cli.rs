@@ -10,7 +10,7 @@ use crate::translation::distance::DistanceMetric;
 /// Uncertainty aware haplotype based genomic variant effect prediction
 #[derive(Parser, Debug)]
 #[clap(version, about)]
-pub(crate) struct Predictosaurus {
+pub(crate) struct Haplodon {
     #[clap(subcommand)]
     pub(crate) command: Command,
 
