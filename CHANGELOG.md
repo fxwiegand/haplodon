@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.0](https://github.com/fxwiegand/haplodon/compare/v0.16.0...v0.17.0) (2026-08-25)
+
+
+### Miscellaneous Chores
+
+* release 0.17.0 ([e89fb4f](https://github.com/fxwiegand/haplodon/commit/e89fb4f9a5cf537b0382c1de652f6afa00167d27))
+
 ## [0.16.0](https://github.com/fxwiegand/predictosaurus/compare/v0.15.0...v0.16.0) (2026-07-13)
 
 
