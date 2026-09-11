@@ -1,6 +1,6 @@
 use crate::cli::HgvsNotation;
 use crate::graph::node::{Node, NodeType};
-use crate::graph::score::{HaplotypeScore, ScoreRecord};
+use crate::graph::score::{AnnotationInput, HaplotypeScore, ScoreRecord};
 use crate::graph::transcript::Transcript;
 use crate::graph::{Edge, VariantGraph};
 use anyhow::Result;
@@ -176,7 +176,7 @@ pub(crate) fn variants_on_graph(path: &PathBuf) -> Result<HashMap<String, BTreeS
 pub(crate) fn create_scores(output_path: &Path) -> Result<()> {
     let db = Connection::open(output_path)?;
     db.execute(
-        "CREATE TABLE scores (transcript String, score FLOAT, frequencies String, hgvsc String, hgvsg String, hgvsg_full String, supporting_reads String, annotation String, protein String)",
+        "CREATE TABLE scores (transcript String, score FLOAT, frequencies String, hgvsc String, hgvsg String, hgvsg_full String, supporting_reads String, annotation String, protein String, consequence String)",
         [],
     )?;
     db.close().unwrap();
@@ -190,7 +190,8 @@ pub(crate) fn write_scores(
 ) -> Result<()> {
     let mut db = Connection::open(path)?;
     let transaction = db.transaction()?;
-    let mut stmt = transaction.prepare("INSERT INTO scores VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")?;
+    let mut stmt =
+        transaction.prepare("INSERT INTO scores VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")?;
     let transcript_name = transcript.name();
     for (score, frequencies, supporting_reads, annotation) in scores {
         stmt.execute(params![
@@ -203,6 +204,7 @@ pub(crate) fn write_scores(
             json5::to_string(&supporting_reads)?,
             json5::to_string(&annotation)?,
             score.altered_protein.to_string(),
+            score.consequence.to_string(),
         ])?;
     }
     transaction.commit()?;
@@ -248,6 +250,31 @@ pub(crate) fn read_scores(
     Ok(scores)
 }
 
+/// Reads every `(transcript, haplotype)` row required to annotate a VCF/BCF.
+pub(crate) fn read_annotation_rows(path: &Path) -> Result<Vec<AnnotationInput>> {
+    let db = Connection::open(path)?;
+    let mut rows = Vec::new();
+    let mut stmt = db.prepare(
+        "SELECT transcript, score, consequence, hgvsc, hgvsg, annotation, frequencies FROM scores",
+    )?;
+    let mut result = stmt.query([])?;
+    while let Some(row) = result.next()? {
+        let annotation: String = row.get(5)?;
+        let frequencies: String = row.get(6)?;
+        rows.push(AnnotationInput {
+            transcript: row.get(0)?,
+            score: row.get(1)?,
+            consequence: row.get(2)?,
+            hgvsc: row.get(3)?,
+            hgvsg: row.get(4)?,
+            annotation: json5::from_str(&annotation)?,
+            frequencies: json5::from_str(&frequencies)?,
+        });
+    }
+    db.close().unwrap();
+    Ok(rows)
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -255,7 +282,7 @@ mod tests {
     use crate::annotation::Annotation;
     use crate::graph::node::{Node, NodeType};
     use crate::graph::paths::Cds;
-    use crate::graph::score::EffectScore;
+    use crate::graph::score::{Consequence, EffectScore};
     use crate::graph::Edge;
     use crate::translation::amino_acids::{AminoAcid, Protein};
     use crate::translation::distance::DistanceMetric;
@@ -462,6 +489,7 @@ mod tests {
             altered_protein: p2,
             distance_metric: DistanceMetric::Epstein,
             realign: false,
+            consequence: Consequence::Missense,
             hgvsc: "c.[100A>G;105C>T]".to_string(),
             hgvsg: "g.[100A>G;105C>T]".to_string(),
             hgvsg_full: "g.[100A>G;105C>T]".to_string(),

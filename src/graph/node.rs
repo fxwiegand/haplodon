@@ -137,6 +137,18 @@ impl Node {
         )
         .unwrap_or_default()
     }
+
+    /// Renders the variant as a single genomic HGVS token, e.g. `467C>T`, using a
+    /// one-based position. This is the token grammar the `annotate` command parses
+    /// back out of a haplotype's stored `hgvsg`.
+    pub(crate) fn hgvsg_token(&self) -> String {
+        format!(
+            "{}{}>{}",
+            self.pos + 1,
+            self.reference_allele,
+            self.alternative_allele
+        )
+    }
 }
 
 #[cfg(test)]
@@ -244,5 +256,13 @@ mod tests {
             coding_sequences: vec![Cds::new(0, 100, 2), Cds::new(200, 300, 1)],
         };
         assert_eq!(var_node.hgvs_notation(&transcript), "43C>A");
+    }
+
+    #[test]
+    fn test_node_hgvsg_token() {
+        let node = Node::new(NodeType::Variant, 466, "C".to_string(), "T".to_string());
+        assert_eq!(node.hgvsg_token(), "467C>T");
+        let deletion = Node::new(NodeType::Variant, 4, "AT".to_string(), "A".to_string());
+        assert_eq!(deletion.hgvsg_token(), "5AT>A");
     }
 }
