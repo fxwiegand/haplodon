@@ -11,7 +11,7 @@ use bio::stats::{LogProb, Prob};
 use clap::Parser;
 use env_logger::Env;
 use genebears::{ClientConfig, GeneBears};
-use log::info;
+use log::{info, warn};
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 use std::sync::{Arc, Mutex};
@@ -117,6 +117,18 @@ impl Command {
                             i + 1,
                             total
                         );
+                        if !transcript.is_translatable(&reference_genome) {
+                            if let Some(base) =
+                                transcript.untranslatable_reference_base(&reference_genome)
+                            {
+                                warn!(
+                                    "Skipping transcript {}: reference coding sequence contains non-ACGT base '{}'",
+                                    transcript.name(),
+                                    base as char
+                                );
+                            }
+                            return Ok(());
+                        }
                         let scores = transcript.scores(
                             graph,
                             &reference_genome,
