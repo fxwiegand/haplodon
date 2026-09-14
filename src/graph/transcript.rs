@@ -84,6 +84,25 @@ impl Transcript {
         }
     }
 
+    /// Returns true if the reference coding sequence consists solely of A, C, G
+    /// and T bases and can therefore be translated.
+    pub(crate) fn is_translatable(&self, reference: &HashMap<String, Vec<u8>>) -> bool {
+        self.untranslatable_reference_base(reference).is_none()
+    }
+
+    /// Returns the first coding reference base that is not A, C, G or T, if any.
+    /// Such bases (`N` or IUPAC ambiguity codes) cannot be translated.
+    pub(crate) fn untranslatable_reference_base(
+        &self,
+        reference: &HashMap<String, Vec<u8>>,
+    ) -> Option<u8> {
+        let target = reference.get(&self.target)?;
+        self.cds()
+            .flat_map(|cds| &target[cds.start as usize..=cds.end as usize])
+            .copied()
+            .find(|&base| !matches!(base, b'A' | b'C' | b'G' | b'T'))
+    }
+
     /// Returns the 0-based position of the variant from the transcript start,
     /// where "start" means the 5' end of the coding sequence — i.e. the highest
     /// genomic coordinate for reverse-strand transcripts.
@@ -767,6 +786,36 @@ chr1\tsource\tCDS\t400\t500\t.\t-\t0\tID=ENSP00000493377
         );
         let cds: Vec<&Cds> = transcript.cds().collect();
         assert!(cds.is_empty());
+    }
+
+    #[test]
+    fn is_translatable_detects_non_acgt_in_coding_sequence() {
+        let mut reference = HashMap::new();
+        reference.insert("test".to_string(), b"ACGTNACGT".to_vec());
+        let transcript = Transcript::new(
+            "ENSP1".to_string(),
+            "test".to_string(),
+            Strand::Forward,
+            vec![Cds::new(0, 8, 0)],
+        );
+        assert!(!transcript.is_translatable(&reference));
+        assert_eq!(
+            transcript.untranslatable_reference_base(&reference),
+            Some(b'N')
+        );
+    }
+
+    #[test]
+    fn is_translatable_ignores_bases_outside_coding_sequence() {
+        let mut reference = HashMap::new();
+        reference.insert("test".to_string(), b"NACGTACGTN".to_vec());
+        let transcript = Transcript::new(
+            "ENSP1".to_string(),
+            "test".to_string(),
+            Strand::Forward,
+            vec![Cds::new(1, 8, 0)],
+        );
+        assert!(transcript.is_translatable(&reference));
     }
 
     #[test]
