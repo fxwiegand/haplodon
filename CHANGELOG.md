@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.1](https://github.com/fxwiegand/haplodon/compare/v0.17.0...v0.17.1) (2026-09-14)
+
+
+### Bug Fixes
+
+* Skip transcripts with untranslatable reference sequence ([#304](https://github.com/fxwiegand/haplodon/issues/304)) ([1686329](https://github.com/fxwiegand/haplodon/commit/1686329a8ae37fb24d9ee1eb70ef9b3f0353d4d7))
+
 ## [0.17.0](https://github.com/fxwiegand/haplodon/compare/v0.16.0...v0.17.0) (2026-08-25)
 
 
