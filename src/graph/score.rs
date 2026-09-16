@@ -31,6 +31,7 @@ impl Consequence {
         original: &Protein,
         altered: &Protein,
         net_frameshift: i64,
+        has_coding_indel: bool,
         start_lost: bool,
     ) -> Consequence {
         if start_lost {
@@ -60,6 +61,11 @@ impl Consequence {
             if reference_aa.is_stop() && !altered_aa.is_stop() {
                 return Consequence::StopLost;
             }
+        }
+        // Offsetting coding indels keep the length unchanged but rewrite the
+        // residues between them, which is structural rather than a substitution.
+        if has_coding_indel {
+            return Consequence::ProteinAltering;
         }
         Consequence::Missense
     }
@@ -118,10 +124,15 @@ impl EffectScore {
             realign = true;
         }
         let net_frameshift: i64 = haplotype.iter().map(Node::frameshift).sum();
+        let has_coding_indel = haplotype
+            .iter()
+            .map(Node::frameshift)
+            .any(|shift| shift != 0);
         let consequence = Consequence::classify(
             &original_protein,
             &altered_protein,
             net_frameshift,
+            has_coding_indel,
             start_lost,
         );
         let mut variants: Vec<_> = haplotype
@@ -589,7 +600,7 @@ mod tests {
     #[test]
     fn classify_identical_proteins_is_synonymous() {
         let protein = Protein::new(vec![AminoAcid::Methionine, AminoAcid::Leucine]);
-        let consequence = Consequence::classify(&protein, &protein.clone(), 0, false);
+        let consequence = Consequence::classify(&protein, &protein.clone(), 0, false, false);
         assert_eq!(consequence, Consequence::Synonymous);
     }
 
@@ -598,7 +609,7 @@ mod tests {
         let original = Protein::new(vec![AminoAcid::Methionine, AminoAcid::Leucine]);
         let altered = Protein::new(vec![AminoAcid::Methionine, AminoAcid::Valine]);
         assert_eq!(
-            Consequence::classify(&original, &altered, 0, false),
+            Consequence::classify(&original, &altered, 0, false, false),
             Consequence::Missense
         );
     }
@@ -616,7 +627,7 @@ mod tests {
             AminoAcid::Valine,
         ]);
         assert_eq!(
-            Consequence::classify(&original, &altered, 0, false),
+            Consequence::classify(&original, &altered, 0, false, false),
             Consequence::StopGained
         );
     }
@@ -637,7 +648,7 @@ mod tests {
             AminoAcid::Stop,
         ]);
         assert_eq!(
-            Consequence::classify(&original, &altered, -3, false),
+            Consequence::classify(&original, &altered, -3, true, false),
             Consequence::StopGained
         );
     }
@@ -658,7 +669,29 @@ mod tests {
             AminoAcid::Stop,
         ]);
         assert_eq!(
-            Consequence::classify(&original, &altered, -3, false),
+            Consequence::classify(&original, &altered, -3, true, false),
+            Consequence::ProteinAltering
+        );
+    }
+
+    #[test]
+    fn classify_offsetting_coding_indels_is_protein_altering() {
+        let original = Protein::new(vec![
+            AminoAcid::Methionine,
+            AminoAcid::Lysine,
+            AminoAcid::Leucine,
+            AminoAcid::Valine,
+        ]);
+        let altered = Protein::new(vec![
+            AminoAcid::Methionine,
+            AminoAcid::Threonine,
+            AminoAcid::Proline,
+            AminoAcid::Valine,
+        ]);
+        // An insertion and a deletion of equal length cancel to a net frameshift
+        // of zero while still rewriting the residues between them.
+        assert_eq!(
+            Consequence::classify(&original, &altered, 0, true, false),
             Consequence::ProteinAltering
         );
     }
@@ -668,7 +701,7 @@ mod tests {
         let original = Protein::new(vec![AminoAcid::Methionine, AminoAcid::Stop]);
         let altered = Protein::new(vec![AminoAcid::Methionine, AminoAcid::Valine]);
         assert_eq!(
-            Consequence::classify(&original, &altered, 0, false),
+            Consequence::classify(&original, &altered, 0, false, false),
             Consequence::StopLost
         );
     }
@@ -678,15 +711,15 @@ mod tests {
         let original = Protein::new(vec![AminoAcid::Methionine, AminoAcid::Leucine]);
         let altered = Protein::new(vec![AminoAcid::Methionine, AminoAcid::Valine]);
         assert_eq!(
-            Consequence::classify(&original, &altered, 1, false),
+            Consequence::classify(&original, &altered, 1, true, false),
             Consequence::Frameshift
         );
         assert_eq!(
-            Consequence::classify(&original, &altered, 3, false),
+            Consequence::classify(&original, &altered, 3, true, false),
             Consequence::ProteinAltering
         );
         assert_eq!(
-            Consequence::classify(&original, &altered, 0, true),
+            Consequence::classify(&original, &altered, 0, false, true),
             Consequence::StartLost
         );
     }
