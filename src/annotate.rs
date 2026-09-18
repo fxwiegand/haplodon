@@ -8,11 +8,11 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::Path;
 
-const HAPLODON_INFO: &[u8] = b"##INFO=<ID=HAPLODON,Number=.,Type=String,Description=\"haplodon haplotype-aware variant effect. One entry per transcript and haplotype; scores are haplotype-level and shared across a haplotype's records, joined via HaplotypeID (per-sample frequencies in FORMAT/HF). Reserved characters are percent-encoded per VCF 4.3. Format: Allele|Consequence|Feature|HGVSc|HGVSg|HaplotypeID|sequence_impact|general_impact|structure_impact|splice_impact|ACMG\">";
+const HAPLODON_INFO: &[u8] = b"##INFO=<ID=HAPLODON,Number=.,Type=String,Description=\"haplodon haplotype-aware variant effect. One entry per transcript and haplotype; scores are haplotype-level and shared across a haplotype's records, joined via haplotype_id (per-sample frequencies in FORMAT/HF). Reserved characters are percent-encoded per VCF 4.3. Format: allele|consequence|feature|hgvsc|hgvsg|haplotype_id|sequence_impact|general_impact|structure_impact|splice_impact|acmg\">";
 
 const HAPLODON_MAX_INFO: &[u8] = b"##INFO=<ID=HAPLODON_MAX,Number=A,Type=Float,Description=\"Maximum haplodon haplotype score for this ALT across all transcripts and haplotypes (0 to 1).\">";
 
-const HF_FORMAT: &[u8] = b"##FORMAT=<ID=HF,Number=.,Type=String,Description=\"Per-sample haplotype frequencies as comma-separated HaplotypeID|Frequency tokens; HaplotypeID matches INFO/HAPLODON.\">";
+const HF_FORMAT: &[u8] = b"##FORMAT=<ID=HF,Number=.,Type=String,Description=\"Per-sample haplotype frequencies as comma-separated haplotype_id|frequency tokens; haplotype_id matches INFO/HAPLODON.\">";
 
 const VERSION_LINE: &str = concat!("##haplodonVersion=", env!("CARGO_PKG_VERSION"));
 
