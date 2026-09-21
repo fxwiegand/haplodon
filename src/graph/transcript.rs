@@ -10,8 +10,8 @@ use crate::graph::score::HaplotypeScore;
 use crate::graph::{EventProbs, VariantGraph};
 use crate::translation::amino_acids::Protein;
 use crate::translation::distance::DistanceMetric;
-use crate::utils::fasta::reverse_complement;
 use anyhow::{bail, Result};
+use bio::alphabets::dna;
 use bio::bio_types::strand::Strand;
 use bio::io::gff::{self};
 use bio::stats::LogProb;
@@ -337,7 +337,7 @@ impl Transcript {
                 );
                 let mut sequence = reference[cds.start as usize..=cds.end as usize].to_vec();
                 if self.strand == Strand::Reverse {
-                    sequence = reverse_complement(&sequence);
+                    sequence = dna::revcomp(&sequence);
                 }
                 sequence = sequence[cds.phase as usize..].to_vec();
                 for path in self.paths(&graph)? {
@@ -379,7 +379,7 @@ impl Transcript {
                                     path_sequence.splice(
                                         position_in_cds..position_in_cds + 1,
                                         String::from_utf8_lossy(
-                                            reverse_complement(node.alternative_allele.as_bytes())
+                                            dna::revcomp(node.alternative_allele.as_bytes())
                                                 .as_slice(),
                                         )
                                         .bytes(),
