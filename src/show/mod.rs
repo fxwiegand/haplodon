@@ -116,6 +116,7 @@ mod tests {
             acmg_score: Some(0.9),
             spliceai_score: Some(0.7),
             alphamissense_score: Some(0.6),
+            gnomad_frequencies: HashMap::new(),
         };
         let scores = HashMap::from([(
             "chr1:some feature".to_string(),
