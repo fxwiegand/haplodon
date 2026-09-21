@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.18.0](https://github.com/fxwiegand/haplodon/compare/v0.17.1...v0.18.0) (2026-09-21)
+
+
+### Features
+
+* Add annotate command ([#303](https://github.com/fxwiegand/haplodon/issues/303)) ([91b4493](https://github.com/fxwiegand/haplodon/commit/91b449321ec13bb7830de9b195e4a2ac6fa0e64e))
+
+
+### Bug Fixes
+
+* Handle non-ACGT bases in reverse complement ([#307](https://github.com/fxwiegand/haplodon/issues/307)) ([87d417c](https://github.com/fxwiegand/haplodon/commit/87d417c32a3541e841d7cc0cb4b4f52592dd9a99))
+
 ## [0.17.1](https://github.com/fxwiegand/haplodon/compare/v0.17.0...v0.17.1) (2026-09-14)
 
 
