@@ -1,9 +1,10 @@
 use anyhow::Result;
 use bio::bio_types::strand::Strand;
-use genebears::{AnnotateOptions, GeneBearError, GeneBears, Genome, Variant};
+use genebears::{AnnotateOptions, AnnotatedVariant, GeneBearError, GeneBears, Genome, Variant};
 use itertools::Itertools;
 use log::warn;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use crate::graph::node::Node;
@@ -15,6 +16,8 @@ pub(crate) struct Annotation {
     pub(crate) acmg_score: Option<f64>,
     pub(crate) spliceai_score: Option<f64>,
     pub(crate) alphamissense_score: Option<f64>,
+    #[serde(default)]
+    pub(crate) gnomad_frequencies: HashMap<String, Option<f64>>,
 }
 
 impl Annotation {
@@ -75,13 +78,42 @@ impl Annotation {
             Err(e) => return Err(anyhow::Error::from(e)),
         };
 
+        let frequency_by_variant: HashMap<(u64, String, String), Option<f64>> = results
+            .iter()
+            .filter_map(|r| {
+                Some((
+                    (r.pos?, r.ref_allele.clone()?, r.alt.clone()?),
+                    gnomad_af(r),
+                ))
+            })
+            .collect();
+        let gnomad_frequencies = in_phase
+            .iter()
+            .map(|node| {
+                let frequency = frequency_by_variant
+                    .get(&(
+                        node.pos as u64 + 1,
+                        node.reference_allele.clone(),
+                        node.alternative_allele.clone(),
+                    ))
+                    .copied()
+                    .flatten();
+                (node.hgvsg_token(), frequency)
+            })
+            .collect();
+
         Ok(Self {
             revel_score: probabilistic_or(results.iter().map(|r| r.revel_score)),
             acmg_score: max_score(results.iter().map(|r| r.acmg_score)),
             spliceai_score: probabilistic_or(results.iter().map(|r| r.spliceai_max_score)),
             alphamissense_score: probabilistic_or(results.iter().map(|r| r.alphamissense_score)),
+            gnomad_frequencies,
         })
     }
+}
+
+fn gnomad_af(variant: &AnnotatedVariant) -> Option<f64> {
+    max_score([variant.gnomad_exomes_af, variant.gnomad_genomes_af].into_iter())
 }
 
 fn max_score(iter: impl Iterator<Item = Option<f64>>) -> Option<f64> {

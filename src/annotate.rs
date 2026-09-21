@@ -12,6 +12,8 @@ const HAPLODON_INFO: &[u8] = b"##INFO=<ID=HAPLODON,Number=.,Type=String,Descript
 
 const HAPLODON_MAX_INFO: &[u8] = b"##INFO=<ID=HAPLODON_MAX,Number=A,Type=Float,Description=\"Maximum haplodon haplotype score for this ALT across all transcripts and haplotypes (0 to 1).\">";
 
+const GNOMAD_AF_INFO: &[u8] = b"##INFO=<ID=GNOMAD_AF,Number=A,Type=Float,Description=\"gnomAD allele frequency for this ALT, the maximum of the gnomAD exomes and genomes frequencies reported by GeneBe.\">";
+
 const HF_FORMAT: &[u8] = b"##FORMAT=<ID=HF,Number=.,Type=String,Description=\"Per-sample haplotype frequencies as comma-separated haplotype_id|frequency tokens; haplotype_id matches INFO/HAPLODON.\">";
 
 const VERSION_LINE: &str = concat!("##haplodonVersion=", env!("CARGO_PKG_VERSION"));
@@ -45,6 +47,7 @@ type VariantKey = (String, i64, String, String);
 pub(crate) fn annotate(calls: &Path, scores: &Path, output: &Path) -> Result<()> {
     let mut haplotypes: Vec<Haplotype> = Vec::new();
     let mut membership: HashMap<VariantKey, Vec<usize>> = HashMap::new();
+    let mut frequencies: HashMap<VariantKey, f64> = HashMap::new();
     for row in read_annotation_rows(scores)? {
         let (target, feature) = row.transcript.split_once(':').ok_or_else(|| {
             anyhow!(
@@ -62,15 +65,16 @@ pub(crate) fn annotate(calls: &Path, scores: &Path, output: &Path) -> Result<()>
         let index = haplotypes.len();
         for token in &tokens {
             let variant = parse_variant(token)?;
-            membership
-                .entry((
-                    target.to_string(),
-                    variant.pos,
-                    variant.reference_allele,
-                    variant.alternative_allele,
-                ))
-                .or_default()
-                .push(index);
+            let key = (
+                target.to_string(),
+                variant.pos,
+                variant.reference_allele,
+                variant.alternative_allele,
+            );
+            if let Some(Some(frequency)) = row.annotation.gnomad_frequencies.get(*token) {
+                frequencies.insert(key.clone(), *frequency);
+            }
+            membership.entry(key).or_default().push(index);
         }
         haplotypes.push(Haplotype {
             feature: feature.to_string(),
@@ -86,7 +90,7 @@ pub(crate) fn annotate(calls: &Path, scores: &Path, output: &Path) -> Result<()>
 
     let mut reader = Reader::from_path(calls)?;
     let input_header = reader.header().clone();
-    for tag in ["HAPLODON", "HAPLODON_MAX", "HF"] {
+    for tag in ["HAPLODON", "HAPLODON_MAX", "HF", "GNOMAD_AF"] {
         if input_header.info_type(tag.as_bytes()).is_ok()
             || input_header.format_type(tag.as_bytes()).is_ok()
         {
@@ -105,6 +109,7 @@ pub(crate) fn annotate(calls: &Path, scores: &Path, output: &Path) -> Result<()>
     let mut header = Header::from_template(&input_header);
     header.push_record(HAPLODON_INFO);
     header.push_record(HAPLODON_MAX_INFO);
+    header.push_record(GNOMAD_AF_INFO);
     header.push_record(HF_FORMAT);
     header.push_record(VERSION_LINE.as_bytes());
     header.push_record(
@@ -132,6 +137,7 @@ pub(crate) fn annotate(calls: &Path, scores: &Path, output: &Path) -> Result<()>
             if annotate_record(&mut record, &target, &haplotypes, &membership, &samples)? {
                 matched += 1;
             }
+            annotate_frequencies(&mut record, &target, &frequencies)?;
         }
         writer.write(&record)?;
     }
@@ -142,6 +148,42 @@ pub(crate) fn annotate(calls: &Path, scores: &Path, output: &Path) -> Result<()>
             calls.display(),
             haplotypes.len()
         );
+    }
+    Ok(())
+}
+
+/// Writes GNOMAD_AF for each ALT of a record that carries a stored gnomAD frequency.
+fn annotate_frequencies(
+    record: &mut Record,
+    target: &str,
+    frequencies: &HashMap<VariantKey, f64>,
+) -> Result<()> {
+    let (reference, alternatives) = {
+        let alleles = record.alleles();
+        if alleles.len() < 2 {
+            return Ok(());
+        }
+        let reference = String::from_utf8_lossy(alleles[0]).into_owned();
+        let alternatives: Vec<String> = alleles[1..]
+            .iter()
+            .map(|allele| String::from_utf8_lossy(allele).into_owned())
+            .collect();
+        (reference, alternatives)
+    };
+    let pos = record.pos();
+    let mut values = Vec::with_capacity(alternatives.len());
+    let mut present = false;
+    for alternative in alternatives {
+        match frequencies.get(&(target.to_string(), pos, reference.clone(), alternative)) {
+            Some(&frequency) => {
+                values.push(frequency as f32);
+                present = true;
+            }
+            None => values.push(f32::missing()),
+        }
+    }
+    if present {
+        record.push_info_float(b"GNOMAD_AF", &values)?;
     }
     Ok(())
 }
@@ -455,6 +497,7 @@ mod tests {
             acmg_score: None,
             spliceai_score: None,
             alphamissense_score: None,
+            gnomad_frequencies: HashMap::from([("7675089C>T".to_string(), Some(0.0123))]),
         };
         write_scores(
             path,
@@ -519,9 +562,12 @@ mod tests {
         // S1 carries the haplotype; S2 has no frequency, so it is dropped to a missing value.
         assert!(frequencies.0.ends_with("|0.42"));
         assert_eq!(frequencies.1, ".");
+        let gnomad_af = annotated.info(b"GNOMAD_AF").float().unwrap().unwrap()[0];
+        assert!((gnomad_af - 0.0123).abs() < 1e-6);
 
         let untouched = records.next().unwrap().unwrap();
         assert!(untouched.info(b"HAPLODON").string().unwrap().is_none());
+        assert!(untouched.info(b"GNOMAD_AF").float().unwrap().is_none());
     }
 
     #[test]
@@ -558,6 +604,7 @@ mod tests {
                 acmg_score: None,
                 spliceai_score: None,
                 alphamissense_score: None,
+                gnomad_frequencies: HashMap::new(),
             };
             let transcript = Transcript::new(
                 feature.to_string(),
