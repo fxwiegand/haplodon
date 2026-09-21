@@ -18,20 +18,6 @@ pub(crate) fn read_reference<P: AsRef<Path> + std::fmt::Debug>(
     genome_map
 }
 
-pub(crate) fn reverse_complement(seq: &[u8]) -> Vec<u8> {
-    seq.iter()
-        .rev()
-        .map(|&nucleotide| match nucleotide {
-            b'A' => b'T',
-            b'T' => b'A',
-            b'C' => b'G',
-            b'G' => b'C',
-            b'N' => b'N',
-            _ => unreachable!("Invalid nucleotide in sequence"),
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -78,40 +64,5 @@ mod tests {
         assert_eq!(result.len(), 2);
         assert_eq!(result["seq1"], Vec::<u8>::new());
         assert_eq!(result["seq2"], Vec::<u8>::new());
-    }
-
-    #[test]
-    fn reverse_complement_of_empty_sequence() {
-        let seq = b"";
-        let result = reverse_complement(seq);
-        assert_eq!(result, b"");
-    }
-
-    #[test]
-    fn reverse_complement_of_single_nucleotide() {
-        let seq = b"A";
-        let result = reverse_complement(seq);
-        assert_eq!(result, b"T");
-    }
-
-    #[test]
-    fn reverse_complement_of_standard_sequence() {
-        let seq = b"ACGT";
-        let result = reverse_complement(seq);
-        assert_eq!(result, b"ACGT");
-    }
-
-    #[test]
-    fn reverse_complement_of_palindromic_sequence() {
-        let seq = b"AGCT";
-        let result = reverse_complement(seq);
-        assert_eq!(result, b"AGCT");
-    }
-
-    #[test]
-    #[should_panic(expected = "Invalid nucleotide in sequence")]
-    fn reverse_complement_with_invalid_nucleotide() {
-        let seq = b"ACGTX";
-        let _ = reverse_complement(seq);
     }
 }

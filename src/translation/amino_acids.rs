@@ -1,8 +1,8 @@
 use crate::graph::node::Node;
 use crate::graph::transcript::Transcript;
 use crate::translation::dna_to_amino_acids;
-use crate::utils::fasta::reverse_complement;
 use anyhow::Result;
+use bio::alphabets::dna;
 use bio::bio_types::strand::Strand;
 use std::collections::HashMap;
 use std::fmt::Display;
@@ -36,7 +36,7 @@ impl Protein {
             .flat_map(|cds| {
                 let region = &target_ref[cds.start as usize..=cds.end as usize];
                 match transcript.strand {
-                    Strand::Reverse => reverse_complement(region),
+                    Strand::Reverse => dna::revcomp(region),
                     _ => region.to_vec(),
                 }
             })
@@ -84,7 +84,7 @@ impl Protein {
                 }
 
                 match transcript.strand {
-                    Strand::Reverse => reverse_complement(&region),
+                    Strand::Reverse => dna::revcomp(&region),
                     _ => region.to_vec(),
                 }
             })

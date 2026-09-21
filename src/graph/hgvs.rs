@@ -1,5 +1,5 @@
 use crate::graph::transcript::Transcript;
-use crate::utils::fasta::reverse_complement;
+use bio::alphabets::dna;
 use bio::bio_types::strand::Strand;
 
 pub(crate) fn hgvsc(
@@ -12,8 +12,8 @@ pub(crate) fn hgvsc(
 
     let (ref_allele, alt_allele) = if transcript.strand == Strand::Reverse {
         (
-            String::from_utf8(reverse_complement(reference_allele.as_bytes())).unwrap(),
-            String::from_utf8(reverse_complement(alternative_allele.as_bytes())).unwrap(),
+            String::from_utf8(dna::revcomp(reference_allele.as_bytes())).unwrap(),
+            String::from_utf8(dna::revcomp(alternative_allele.as_bytes())).unwrap(),
         )
     } else {
         (reference_allele.to_string(), alternative_allele.to_string())
@@ -189,14 +189,6 @@ mod tests {
                 ""
             ),
             None
-        );
-    }
-
-    #[test]
-    fn rc_via_fasta_util() {
-        assert_eq!(
-            String::from_utf8(reverse_complement(b"ATCG")).unwrap(),
-            "CGAT"
         );
     }
 
