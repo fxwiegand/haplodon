@@ -16,6 +16,7 @@ use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 use std::sync::{Arc, Mutex};
 
+mod annotate;
 mod annotation;
 mod cli;
 mod graph;
@@ -193,6 +194,16 @@ impl Command {
                 }
                 let scores = read_scores(input, *notation)?;
                 render_scores(output, &scores, *report_protein)?;
+            }
+            Command::Annotate {
+                calls,
+                scores,
+                output,
+            } => {
+                if let Some(parent) = output.parent() {
+                    create_output_dir(parent)?;
+                }
+                annotate::annotate(calls, scores, output)?;
             }
         }
         Ok(())

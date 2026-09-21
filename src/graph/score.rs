@@ -10,6 +10,91 @@ use bio::alignment::AlignmentOperation::*;
 use bio::bio_types::strand::Strand;
 use clap::ValueEnum;
 use std::collections::{HashMap, HashSet};
+use std::fmt;
+
+/// Coarse, Sequence-Ontology-style classification of a haplotype's effect on the
+/// protein. Derived best-effort from the reference and altered protein sequences;
+/// the graded [`EffectScore::score`] remains the primary product.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Consequence {
+    Synonymous,
+    Missense,
+    StopGained,
+    StopLost,
+    StartLost,
+    Frameshift,
+    ProteinAltering,
+}
+
+impl Consequence {
+    fn classify(
+        original: &Protein,
+        altered: &Protein,
+        net_frameshift: i64,
+        has_coding_indel: bool,
+        start_lost: bool,
+    ) -> Consequence {
+        if start_lost {
+            return Consequence::StartLost;
+        }
+        if net_frameshift % 3 != 0 {
+            return Consequence::Frameshift;
+        }
+        // An in-frame change that introduces a stop upstream of the natural one is a
+        // stop gain, whether or not it also rearranges residues (in-frame indel).
+        if has_premature_stop(altered) && !has_premature_stop(original) {
+            return Consequence::StopGained;
+        }
+        if net_frameshift != 0 {
+            return Consequence::ProteinAltering;
+        }
+        if original == altered {
+            return Consequence::Synonymous;
+        }
+        // Both proteins have the same length here, so a lost stop is the only
+        // remaining categorical change; anything else is a plain substitution.
+        for (reference_aa, altered_aa) in original
+            .amino_acids()
+            .into_iter()
+            .zip(altered.amino_acids())
+        {
+            if reference_aa.is_stop() && !altered_aa.is_stop() {
+                return Consequence::StopLost;
+            }
+        }
+        // Offsetting coding indels keep the length unchanged but rewrite the
+        // residues between them, which is structural rather than a substitution.
+        if has_coding_indel {
+            return Consequence::ProteinAltering;
+        }
+        Consequence::Missense
+    }
+}
+
+/// True if the protein is truncated by a stop codon upstream of its last residue.
+fn has_premature_stop(protein: &Protein) -> bool {
+    protein
+        .amino_acids()
+        .iter()
+        .rev()
+        .skip(1)
+        .any(AminoAcid::is_stop)
+}
+
+impl fmt::Display for Consequence {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let term = match self {
+            Consequence::Synonymous => "synonymous_variant",
+            Consequence::Missense => "missense_variant",
+            Consequence::StopGained => "stop_gained",
+            Consequence::StopLost => "stop_lost",
+            Consequence::StartLost => "start_lost",
+            Consequence::Frameshift => "frameshift_variant",
+            Consequence::ProteinAltering => "protein_altering_variant",
+        };
+        write!(f, "{term}")
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct EffectScore {
@@ -17,6 +102,7 @@ pub struct EffectScore {
     pub altered_protein: Protein,
     pub distance_metric: DistanceMetric,
     pub realign: bool,
+    pub consequence: Consequence,
     pub hgvsc: String,
     pub hgvsg: String,
     pub hgvsg_full: String,
@@ -32,10 +118,23 @@ impl EffectScore {
         mut realign: bool,
     ) -> Result<Self> {
         let mut altered_protein = Protein::from_haplotype(reference, transcript, haplotype)?;
-        if altered_protein.start_lost(&original_protein) {
+        let start_lost = altered_protein.start_lost(&original_protein);
+        if start_lost {
             altered_protein.apply_start_lost();
             realign = true;
         }
+        let net_frameshift: i64 = haplotype.iter().map(Node::frameshift).sum();
+        let has_coding_indel = haplotype
+            .iter()
+            .map(Node::frameshift)
+            .any(|shift| shift != 0);
+        let consequence = Consequence::classify(
+            &original_protein,
+            &altered_protein,
+            net_frameshift,
+            has_coding_indel,
+            start_lost,
+        );
         let mut variants: Vec<_> = haplotype
             .iter()
             .filter(|n| n.node_type.is_variant())
@@ -44,12 +143,7 @@ impl EffectScore {
             "g.[{}]",
             variants
                 .iter()
-                .map(|n| format!(
-                    "{}{}>{}",
-                    n.pos + 1,
-                    n.reference_allele,
-                    n.alternative_allele
-                ))
+                .map(|n| n.hgvsg_token())
                 .collect::<Vec<_>>()
                 .join(";")
         );
@@ -59,12 +153,7 @@ impl EffectScore {
                 .iter()
                 .map(|n| {
                     if n.node_type.is_variant() {
-                        format!(
-                            "{}{}>{}",
-                            n.pos + 1,
-                            n.reference_allele,
-                            n.alternative_allele
-                        )
+                        n.hgvsg_token()
                     } else {
                         format!("{}=", n.pos + 1)
                     }
@@ -88,6 +177,7 @@ impl EffectScore {
             altered_protein,
             distance_metric,
             realign,
+            consequence,
             hgvsc,
             hgvsg,
             hgvsg_full,
@@ -216,6 +306,18 @@ pub(crate) type ScoreRecord = (
     Annotation,
     String,
 );
+
+/// A single `(transcript, haplotype)` row of `scores.duckdb` reduced to the fields
+/// the `annotate` command needs to write predictions back into a VCF/BCF.
+pub(crate) struct AnnotationInput {
+    pub(crate) transcript: String,
+    pub(crate) score: f64,
+    pub(crate) consequence: String,
+    pub(crate) hgvsc: String,
+    pub(crate) hgvsg: String,
+    pub(crate) annotation: Annotation,
+    pub(crate) frequencies: HaplotypeFrequency,
+}
 
 impl HaplotypeMetric {
     pub fn calculate(&self, haplotype: &[Node], samples: &HashSet<String>) -> HaplotypeFrequency {
@@ -393,6 +495,7 @@ mod tests {
             altered_protein: p2,
             distance_metric: DistanceMetric::Epstein,
             realign: false,
+            consequence: Consequence::Missense,
             hgvsc: "c.[100A>G;105C>T]".to_string(),
             hgvsg: "g.[100A>G;105C>T]".to_string(),
             hgvsg_full: "g.[100A>G;105C>T]".to_string(),
@@ -409,6 +512,7 @@ mod tests {
             altered_protein: p2,
             distance_metric: DistanceMetric::Epstein,
             realign: false,
+            consequence: Consequence::Missense,
             hgvsc: "c.[100A>G;105C>T]".to_string(),
             hgvsg: "g.[100A>G;105C>T]".to_string(),
             hgvsg_full: "g.[100A>G;105C>T]".to_string(),
@@ -434,6 +538,7 @@ mod tests {
             altered_protein: p2,
             distance_metric: DistanceMetric::Epstein,
             realign: false,
+            consequence: Consequence::Missense,
             hgvsc: "c.[100A>G;105C>T]".to_string(),
             hgvsg: "g.[100A>G;105C>T]".to_string(),
             hgvsg_full: "g.[100A>G;105C>T]".to_string(),
@@ -454,6 +559,7 @@ mod tests {
             altered_protein: p2,
             distance_metric: DistanceMetric::Epstein,
             realign: true,
+            consequence: Consequence::Frameshift,
             hgvsc: "c.[100A>G;105C>T]".to_string(),
             hgvsg: "g.[100A>G;105C>T]".to_string(),
             hgvsg_full: "g.[100A>G;105C>T]".to_string(),
@@ -483,10 +589,145 @@ mod tests {
             altered_protein: p2,
             distance_metric: DistanceMetric::Epstein,
             realign: true,
+            consequence: Consequence::Frameshift,
             hgvsc: "c.[100A>G;105C>T]".to_string(),
             hgvsg: "g.[100A>G;105C>T]".to_string(),
             hgvsg_full: "g.[100A>G;105C>T]".to_string(),
         };
         assert!((score.score() - 0.2).abs() < 1e-6)
+    }
+
+    #[test]
+    fn classify_identical_proteins_is_synonymous() {
+        let protein = Protein::new(vec![AminoAcid::Methionine, AminoAcid::Leucine]);
+        let consequence = Consequence::classify(&protein, &protein.clone(), 0, false, false);
+        assert_eq!(consequence, Consequence::Synonymous);
+    }
+
+    #[test]
+    fn classify_single_substitution_is_missense() {
+        let original = Protein::new(vec![AminoAcid::Methionine, AminoAcid::Leucine]);
+        let altered = Protein::new(vec![AminoAcid::Methionine, AminoAcid::Valine]);
+        assert_eq!(
+            Consequence::classify(&original, &altered, 0, false, false),
+            Consequence::Missense
+        );
+    }
+
+    #[test]
+    fn classify_premature_stop_is_stop_gained() {
+        let original = Protein::new(vec![
+            AminoAcid::Methionine,
+            AminoAcid::Leucine,
+            AminoAcid::Valine,
+        ]);
+        let altered = Protein::new(vec![
+            AminoAcid::Methionine,
+            AminoAcid::Stop,
+            AminoAcid::Valine,
+        ]);
+        assert_eq!(
+            Consequence::classify(&original, &altered, 0, false, false),
+            Consequence::StopGained
+        );
+    }
+
+    #[test]
+    fn classify_inframe_indel_that_introduces_a_stop_is_stop_gained() {
+        let original = Protein::new(vec![
+            AminoAcid::Methionine,
+            AminoAcid::Lysine,
+            AminoAcid::Leucine,
+            AminoAcid::Valine,
+            AminoAcid::Stop,
+        ]);
+        let altered = Protein::new(vec![
+            AminoAcid::Methionine,
+            AminoAcid::Stop,
+            AminoAcid::Valine,
+            AminoAcid::Stop,
+        ]);
+        assert_eq!(
+            Consequence::classify(&original, &altered, -3, true, false),
+            Consequence::StopGained
+        );
+    }
+
+    #[test]
+    fn classify_inframe_deletion_without_new_stop_is_protein_altering() {
+        let original = Protein::new(vec![
+            AminoAcid::Methionine,
+            AminoAcid::Lysine,
+            AminoAcid::Leucine,
+            AminoAcid::Valine,
+            AminoAcid::Stop,
+        ]);
+        let altered = Protein::new(vec![
+            AminoAcid::Methionine,
+            AminoAcid::Leucine,
+            AminoAcid::Valine,
+            AminoAcid::Stop,
+        ]);
+        assert_eq!(
+            Consequence::classify(&original, &altered, -3, true, false),
+            Consequence::ProteinAltering
+        );
+    }
+
+    #[test]
+    fn classify_offsetting_coding_indels_is_protein_altering() {
+        let original = Protein::new(vec![
+            AminoAcid::Methionine,
+            AminoAcid::Lysine,
+            AminoAcid::Leucine,
+            AminoAcid::Valine,
+        ]);
+        let altered = Protein::new(vec![
+            AminoAcid::Methionine,
+            AminoAcid::Threonine,
+            AminoAcid::Proline,
+            AminoAcid::Valine,
+        ]);
+        // An insertion and a deletion of equal length cancel to a net frameshift
+        // of zero while still rewriting the residues between them.
+        assert_eq!(
+            Consequence::classify(&original, &altered, 0, true, false),
+            Consequence::ProteinAltering
+        );
+    }
+
+    #[test]
+    fn classify_lost_stop_is_stop_lost() {
+        let original = Protein::new(vec![AminoAcid::Methionine, AminoAcid::Stop]);
+        let altered = Protein::new(vec![AminoAcid::Methionine, AminoAcid::Valine]);
+        assert_eq!(
+            Consequence::classify(&original, &altered, 0, false, false),
+            Consequence::StopLost
+        );
+    }
+
+    #[test]
+    fn classify_uses_frameshift_and_start_lost_before_residue_comparison() {
+        let original = Protein::new(vec![AminoAcid::Methionine, AminoAcid::Leucine]);
+        let altered = Protein::new(vec![AminoAcid::Methionine, AminoAcid::Valine]);
+        assert_eq!(
+            Consequence::classify(&original, &altered, 1, true, false),
+            Consequence::Frameshift
+        );
+        assert_eq!(
+            Consequence::classify(&original, &altered, 3, true, false),
+            Consequence::ProteinAltering
+        );
+        assert_eq!(
+            Consequence::classify(&original, &altered, 0, false, true),
+            Consequence::StartLost
+        );
+    }
+
+    #[test]
+    fn consequence_renders_sequence_ontology_terms() {
+        assert_eq!(Consequence::Missense.to_string(), "missense_variant");
+        assert_eq!(Consequence::StopGained.to_string(), "stop_gained");
+        assert_eq!(Consequence::Frameshift.to_string(), "frameshift_variant");
     }
 }
