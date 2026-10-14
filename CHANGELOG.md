@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.2](https://github.com/fxwiegand/haplodon/compare/v0.19.1...v0.19.2) (2026-10-14)
+
+
+### Performance Improvements
+
+* Load only the requested subgraph in feature_graph ([#318](https://github.com/fxwiegand/haplodon/issues/318)) ([8ee2029](https://github.com/fxwiegand/haplodon/commit/8ee2029a10dd4b8872bb681b1fcb2545b86d5800))
+
 ## [0.19.1](https://github.com/fxwiegand/haplodon/compare/v0.19.0...v0.19.1) (2026-09-28)
 
 
