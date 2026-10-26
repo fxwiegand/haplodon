@@ -72,10 +72,15 @@ pub(crate) enum Command {
         #[clap(short, long)]
         output: PathBuf,
 
-        /// Maximum number of haplotypes to consider per transcript. Haplotypes are ranked by their minimum read support across all edges (excluding zero-support edges, which indicate uncertain phasing).
+        /// Maximum number of haplotypes to consider per phase block (run of variants linked by reads). Haplotypes are ranked by their minimum read support across all edges.
         /// Only the top-k haplotypes are retained. Lower values reduce runtime and memory usage at the cost of potentially missing low-confidence haplotypes.
-        #[clap(long, default_value = "50")]
-        max_haplotypes_per_transcript: usize,
+        #[clap(
+            long,
+            alias = "max-haplotypes-per-transcript",
+            default_value = "50",
+            value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..)
+        )]
+        max_haplotypes_per_block: usize,
 
         /// Optional path to a cache file for GeneBe annotations. If not provided, annotations will be fetched from the GeneBe API and cached in memory during runtime.
         /// Providing a cache file allows reusing annotations across multiple runs and can speed up processing as well as reduce load on the GeneBe API which comes with limits.
