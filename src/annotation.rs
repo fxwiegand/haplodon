@@ -75,6 +75,9 @@ pub(crate) fn fetch_annotations(
     genome_build: Genome,
     genebe_client: &Arc<Mutex<GeneBears>>,
 ) -> Result<HashMap<String, AnnotatedVariant>> {
+    if variants.is_empty() {
+        return Ok(HashMap::new());
+    }
     let requests = variants
         .iter()
         .map(|node| {
