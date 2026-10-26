@@ -51,7 +51,7 @@ impl Command {
                 let targets = get_targets(calls)?;
                 let graphs = targets
                     .into_par_iter()
-                    .filter_map(|target| {
+                    .map(|target| {
                         info!("Building graph for target {target}");
                         let variant_graph = VariantGraph::build(
                             calls,
@@ -59,19 +59,17 @@ impl Command {
                             &target,
                             LogProb::from(Prob(*min_prob_present)),
                             *min_vaf,
-                        )
-                        .ok()?;
+                        )?;
                         info!(
                             "Finished building graph for target {} with {} nodes",
                             target,
                             variant_graph.graph.node_count()
                         );
-                        if !variant_graph.is_empty() {
-                            Some((target, variant_graph))
-                        } else {
-                            None
-                        }
+                        Ok((!variant_graph.is_empty()).then_some((target, variant_graph)))
                     })
+                    .collect::<Result<Vec<_>>>()?
+                    .into_iter()
+                    .flatten()
                     .collect();
                 write_graphs(graphs, output)?;
             }

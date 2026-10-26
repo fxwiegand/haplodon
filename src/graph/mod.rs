@@ -12,7 +12,7 @@ use crate::graph::node::{Node, NodeType};
 use crate::graph::paths::HaplotypePath;
 use crate::utils::bcf::extract_event_names;
 use crate::utils::NUMERICAL_EPSILON;
-use anyhow::Result;
+use anyhow::{bail, Result};
 use bio::stats::bayesian::bayes_factors::evidence::KassRaftery;
 use bio::stats::bayesian::BayesFactor;
 use bio::stats::{LogProb, PHREDProb};
@@ -219,6 +219,10 @@ impl VariantGraph {
                 }
             }
             last_position = position;
+        }
+        // Without fragment IDs all reads of a sample would count as one fragment.
+        if supporting_reads.keys().any(|(_, id)| id.is_none()) {
+            bail!("Observations lack fragment IDs, rerun `varlociraptor preprocess variants` with --report-fragment-ids");
         }
 
         let mut variant_graph = VariantGraph {
