@@ -115,13 +115,11 @@ impl EffectScore {
         haplotype: &[Node],
         original_protein: Protein,
         distance_metric: DistanceMetric,
-        mut realign: bool,
     ) -> Result<Self> {
         let mut altered_protein = Protein::from_haplotype(reference, transcript, haplotype)?;
         let start_lost = altered_protein.start_lost(&original_protein);
         if start_lost {
             altered_protein.apply_start_lost();
-            realign = true;
         }
         let net_frameshift: i64 = haplotype.iter().map(Node::frameshift).sum();
         let has_coding_indel = haplotype
@@ -176,7 +174,8 @@ impl EffectScore {
             original_protein,
             altered_protein,
             distance_metric,
-            realign,
+            // Indels shift the residues between them even if they cancel out.
+            realign: start_lost || has_coding_indel,
             consequence,
             hgvsc,
             hgvsg,
@@ -204,10 +203,12 @@ impl EffectScore {
                 .zip(self.altered_protein.amino_acids())
                 .enumerate()
             {
+                total += self.distance_metric.compute(&ref_aa, &alt_aa);
+                // Everything downstream of a premature stop is lost, like in the realigned case.
                 if alt_aa.is_stop() && !ref_aa.is_stop() {
                     total += (self.altered_protein.amino_acids().len() - i - 1) as f64;
+                    break;
                 }
-                total += self.distance_metric.compute(&ref_aa, &alt_aa);
             }
             total / self.altered_protein.amino_acids().len() as f64
         } else {
@@ -531,7 +532,7 @@ mod tests {
         let p2 = Protein::new(vec![
             AminoAcid::Phenylalanine,
             AminoAcid::Stop,
-            AminoAcid::Valine,
+            AminoAcid::Stop,
         ]);
         let score = EffectScore {
             original_protein: p1,

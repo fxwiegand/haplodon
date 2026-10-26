@@ -1,5 +1,6 @@
-use crate::annotation::Annotation;
+use crate::annotation::{fetch_annotations, Annotation};
 use crate::cli::Interval;
+use crate::graph::combinations::{extreme_combinations, Combination, Scoring, State, STOPPED};
 use crate::graph::duck::{feature_graph, variants_on_graph};
 use crate::graph::node::{Node, NodeType};
 use crate::graph::paths::{Cds, HaplotypePath};
@@ -8,17 +9,16 @@ use crate::graph::score::EffectScore;
 use crate::graph::score::HaplotypeMetric;
 use crate::graph::score::HaplotypeScore;
 use crate::graph::{EventProbs, VariantGraph};
-use crate::translation::amino_acids::Protein;
+use crate::translation::amino_acids::{AminoAcid, Protein};
 use crate::translation::distance::DistanceMetric;
 use anyhow::{bail, Result};
 use bio::alphabets::dna;
 use bio::bio_types::strand::Strand;
 use bio::io::gff::{self};
 use bio::stats::LogProb;
-use genebears::GeneBears;
-use genebears::Genome;
+use genebears::{AnnotatedVariant, GeneBears, Genome};
 use itertools::Itertools;
-use log::info;
+use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -32,7 +32,9 @@ pub(crate) struct Transcript {
     pub(crate) coding_sequences: Vec<Cds>,
 }
 
-type Haplotypes = Vec<(Vec<Node>, Vec<HashMap<String, u32>>)>;
+/// Coding nodes of a haplotype and the reads supporting the edges between them.
+type Haplotype = (Vec<Node>, Vec<HashMap<String, u32>>);
+type Haplotypes = Vec<Haplotype>;
 
 impl Transcript {
     pub(crate) fn new(
@@ -137,11 +139,15 @@ impl Transcript {
         }
     }
 
-    fn haplotypes(
+    /// Haplotypes per phase block, restricted to the CDS, in transcript order.
+    fn block_haplotypes(
         &self,
         graph: &PathBuf,
         max_haplotypes: usize,
-    ) -> Result<(Haplotypes, HashSet<String>)> {
+    ) -> Result<(Vec<Haplotypes>, HashSet<String>)> {
+        if self.strand == Strand::Unknown {
+            bail!("Strand is unknown for transcript {}", self.name());
+        }
         let graph = match feature_graph(
             graph.to_owned(),
             self.target.clone(),
@@ -172,78 +178,125 @@ impl Transcript {
             .filter(|&i| in_cds(graph.graph[i].pos))
             .count();
 
-        info!(
-            "Calculating paths for transcript {} with {} variant nodes",
-            self.name(),
-            variant_count
-        );
+        let coding_haplotype = |p: &HaplotypePath| {
+            let nodes: Vec<Node> =
+                p.0.iter()
+                    .map(|v| graph.graph.node_weight(*v).unwrap().to_owned())
+                    .collect();
+            let edge_reads = graph.edge_reads(&p.0);
 
-        let raw_paths = match self.strand {
-            Strand::Forward => graph.top_k_paths(max_haplotypes),
-            Strand::Reverse => graph.reverse_top_k_paths(max_haplotypes),
-            Strand::Unknown => bail!("Strand is unknown for transcript {}", self.name()),
+            let mut filtered_nodes: Vec<Node> = Vec::new();
+            let mut filtered_edges: Vec<HashMap<String, u32>> = Vec::new();
+            let mut last_cds_idx: Option<usize> = None;
+
+            for (i, node) in nodes.iter().enumerate() {
+                if !in_cds(node.pos) {
+                    continue;
+                }
+                if let Some(prev_idx) = last_cds_idx {
+                    let span = &edge_reads[prev_idx..i];
+                    let samples: HashSet<&String> = span.iter().flat_map(|e| e.keys()).collect();
+                    let merged = samples
+                        .into_iter()
+                        .map(|s| {
+                            let min = span
+                                .iter()
+                                .map(|e| *e.get(s).unwrap_or(&0))
+                                .min()
+                                .unwrap_or(0);
+                            (s.clone(), min)
+                        })
+                        .collect();
+                    filtered_edges.push(merged);
+                }
+                filtered_nodes.push(node.clone());
+                last_cds_idx = Some(i);
+            }
+
+            (filtered_nodes, filtered_edges)
         };
 
-        let haplotypes = raw_paths
+        // Sorted by alleles to make ties reproducible.
+        let alleles = |nodes: &[Node]| {
+            nodes
+                .iter()
+                .map(|n| (n.pos, n.node_type.is_variant(), n.hgvsg_token()))
+                .collect_vec()
+        };
+        let mut blocks: Vec<Haplotypes> = Vec::new();
+        for block in graph.phase_blocks() {
+            // Blocks without coding variants, like intronic ones, don't change the protein.
+            let coding = graph.graph.node_weights().any(|node| {
+                block.contains(&node.index) && node.node_type.is_variant() && in_cds(node.pos)
+            });
+            if !coding {
+                continue;
+            }
+            let paths = graph.top_k_paths(&block, max_haplotypes);
+            if paths.is_empty() {
+                warn!(
+                    "Skipping transcript {}: a phase block has no path consistent with the reads",
+                    self.name()
+                );
+                return Ok((vec![], samples));
+            }
+            let haplotypes: Haplotypes = paths
+                .iter()
+                .map(coding_haplotype)
+                .unique_by(|(nodes, _)| alleles(nodes))
+                .sorted_by_cached_key(|(nodes, _)| alleles(nodes))
+                .collect();
+            blocks.push(haplotypes);
+        }
+        if self.strand == Strand::Reverse {
+            blocks.reverse();
+        }
+        let mut blocks = self.merge_shared_codons(blocks);
+        // Without coding variants the coding sequence is the reference.
+        if blocks.is_empty() && !graph.is_empty() {
+            blocks.push(vec![(vec![], vec![])]);
+        }
+
+        info!(
+            "Calculating paths for transcript {} with {} variant nodes in {} phase blocks",
+            self.name(),
+            variant_count,
+            blocks.len()
+        );
+
+        Ok((blocks, samples))
+    }
+
+    /// Positions in the coding sequence of the first and last reference base of the nodes.
+    fn coding_positions<'a>(&'a self, nodes: &'a [Node]) -> impl Iterator<Item = usize> + 'a {
+        nodes
             .iter()
-            .map(|p| {
-                let nodes: Vec<Node> =
-                    p.0.iter()
-                        .map(|v| graph.graph.node_weight(*v).unwrap().to_owned())
+            .flat_map(|node| [node.pos, node.pos + node.reference_allele.len() as i64 - 1])
+            .filter_map(|pos| self.position_in_transcript(pos as usize).ok())
+    }
+
+    /// Merges consecutive phase blocks whose coding positions share a codon, since their
+    /// variants can only be translated together.
+    fn merge_shared_codons(&self, blocks: Vec<Haplotypes>) -> Vec<Haplotypes> {
+        let codons = |haplotypes: &Haplotypes| -> HashSet<usize> {
+            self.coding_positions(&haplotypes[0].0)
+                .map(|position| position / 3)
+                .collect()
+        };
+        let mut merged: Vec<Haplotypes> = Vec::new();
+        for block in blocks {
+            match merged.last_mut() {
+                Some(previous) if !codons(previous).is_disjoint(&codons(&block)) => {
+                    *previous = previous
+                        .iter()
+                        .cartesian_product(&block)
+                        .map(|(upstream, downstream)| concat([upstream, downstream]))
                         .collect();
-                let edge_reads = graph.edge_reads(&p.0);
-
-                let mut filtered_nodes: Vec<Node> = Vec::new();
-                let mut filtered_edges: Vec<HashMap<String, u32>> = Vec::new();
-                let mut last_cds_idx: Option<usize> = None;
-
-                for (i, node) in nodes.iter().enumerate() {
-                    if !in_cds(node.pos) {
-                        continue;
-                    }
-                    if let Some(prev_idx) = last_cds_idx {
-                        let span = &edge_reads[prev_idx..i];
-                        let merged = if span.is_empty() {
-                            HashMap::new()
-                        } else {
-                            let samples: std::collections::HashSet<&String> =
-                                span.iter().flat_map(|e| e.keys()).collect();
-                            samples
-                                .into_iter()
-                                .map(|s| {
-                                    let min = span
-                                        .iter()
-                                        .map(|e| *e.get(s).unwrap_or(&0))
-                                        .min()
-                                        .unwrap_or(0);
-                                    (s.clone(), min)
-                                })
-                                .collect()
-                        };
-                        filtered_edges.push(merged);
-                    }
-                    filtered_nodes.push(node.clone());
-                    last_cds_idx = Some(i);
                 }
-
-                (filtered_nodes, filtered_edges)
-            })
-            .unique_by(|(nodes, _)| {
-                nodes
-                    .iter()
-                    .map(|n| {
-                        (
-                            n.pos,
-                            n.node_type.clone(),
-                            n.reference_allele.clone(),
-                            n.alternative_allele.clone(),
-                        )
-                    })
-                    .collect_vec()
-            })
-            .collect();
-
-        Ok((haplotypes, samples))
+                _ => merged.push(block),
+            }
+        }
+        merged
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -257,25 +310,56 @@ impl Transcript {
         genome_build: Genome,
         genebe_client: &Arc<Mutex<GeneBears>>,
     ) -> Result<Vec<HaplotypeScore>> {
-        let (haplotypes, samples) = self.haplotypes(graph, max_haplotypes)?;
-        let mut scores = Vec::with_capacity(haplotypes.len());
-        let original_protein = Protein::from_transcript(reference, self)?;
-        for (haplotype, supporting_reads) in haplotypes {
-            let realign = haplotype.iter().map(|node| node.frameshift()).sum::<i64>() != 0;
-            let effect_score = EffectScore::from_haplotype(
-                reference,
-                self,
-                &haplotype,
-                original_protein.clone(),
-                distance_metric,
-                realign,
-            )?;
-            let frequency = haplotype_metric.calculate(&haplotype, &samples);
-            let annotation =
-                Annotation::from_haplotype(&haplotype, self, genome_build, genebe_client)?;
-            scores.push((effect_score, frequency, supporting_reads, annotation));
-        }
-        Ok(scores)
+        let (blocks, samples) = self.block_haplotypes(graph, max_haplotypes)?;
+        let variants = blocks
+            .iter()
+            .flatten()
+            .flat_map(|(nodes, _)| nodes)
+            .filter(|node| node.node_type.is_variant())
+            .unique_by(|node| node.hgvsg_token())
+            .collect_vec();
+        let annotations = fetch_annotations(&variants, &self.target, genome_build, genebe_client)?;
+        self.score_haplotypes(
+            &blocks,
+            &samples,
+            reference,
+            haplotype_metric,
+            distance_metric,
+            &annotations,
+        )
+    }
+
+    fn score_haplotypes(
+        &self,
+        blocks: &[Haplotypes],
+        samples: &HashSet<String>,
+        reference: &HashMap<String, Vec<u8>>,
+        haplotype_metric: HaplotypeMetric,
+        distance_metric: DistanceMetric,
+        annotations: &HashMap<String, AnnotatedVariant>,
+    ) -> Result<Vec<HaplotypeScore>> {
+        let mut scorer = Scorer {
+            transcript: self,
+            blocks,
+            reference,
+            distance_metric,
+            annotations,
+            original_protein: Protein::from_transcript(reference, self)?,
+            stops: HashMap::new(),
+        };
+        let sizes = blocks.iter().map(Vec::len).collect_vec();
+        let combinations = extreme_combinations(&sizes, &mut scorer)?;
+
+        combinations
+            .iter()
+            .map(|combination| {
+                let (haplotype, supporting_reads) = combine(blocks, combination);
+                let effect_score = scorer.effect_score(&haplotype)?;
+                let annotation = scorer.annotation(combination)?;
+                let frequency = haplotype_metric.calculate(&haplotype, samples);
+                Ok((effect_score, frequency, supporting_reads, annotation))
+            })
+            .collect()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -412,6 +496,135 @@ impl Transcript {
     }
 }
 
+/// Scores combinations of the phase block haplotypes of a transcript.
+struct Scorer<'a> {
+    transcript: &'a Transcript,
+    blocks: &'a [Haplotypes],
+    reference: &'a HashMap<String, Vec<u8>>,
+    distance_metric: DistanceMetric,
+    annotations: &'a HashMap<String, AnnotatedVariant>,
+    original_protein: Protein,
+    /// Stop codons by combination.
+    stops: HashMap<Combination, Option<usize>>,
+}
+
+impl Scorer<'_> {
+    fn effect_score(&self, haplotype: &[Node]) -> Result<EffectScore> {
+        EffectScore::from_haplotype(
+            self.reference,
+            self.transcript,
+            haplotype,
+            self.original_protein.clone(),
+            self.distance_metric,
+        )
+    }
+
+    /// Codon of the altered protein at which translation stops.
+    fn stop(&mut self, combination: &[Option<usize>]) -> Result<Option<usize>> {
+        if let Some(&stop) = self.stops.get(combination) {
+            return Ok(stop);
+        }
+        let (haplotype, _) = combine(self.blocks, combination);
+        let stop = Protein::from_haplotype(self.reference, self.transcript, &haplotype)?
+            .amino_acids()
+            .iter()
+            .position(AminoAcid::is_stop);
+        self.stops.insert(combination.to_vec(), stop);
+        Ok(stop)
+    }
+
+    fn annotation(&mut self, combination: &[Option<usize>]) -> Result<Annotation> {
+        let (haplotype, _) = combine(self.blocks, combination);
+        Ok(Annotation::from_haplotype(
+            &haplotype,
+            self.transcript,
+            self.annotations,
+            self.stop(combination)?,
+        ))
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Impact {
+    Sequence,
+    Revel,
+    AlphaMissense,
+    SpliceAi,
+    Acmg,
+}
+
+impl Scoring for Scorer<'_> {
+    type Impact = Impact;
+    const IMPACTS: &'static [Impact] = &[
+        Impact::Sequence,
+        Impact::Revel,
+        Impact::AlphaMissense,
+        Impact::SpliceAi,
+        Impact::Acmg,
+    ];
+
+    // Stopped if a stop codon lies before the next block, otherwise the frame offset.
+    fn state_after(&mut self, prefix: &[Option<usize>], block: usize) -> Result<State> {
+        let (haplotype, _) = combine(self.blocks, prefix);
+        let shift: i64 = haplotype.iter().map(Node::frameshift).sum();
+        // All haplotypes of a block cover the same positions.
+        let next = self
+            .blocks
+            .get(block + 1)
+            .and_then(|haplotypes| self.transcript.coding_positions(&haplotypes[0].0).min());
+        // The indels of the prefix shift the next block.
+        match (self.stop(prefix)?, next) {
+            (Some(stop), Some(next)) if 3 * stop as i64 + 3 <= next as i64 + shift => Ok(STOPPED),
+            _ => Ok(shift.rem_euclid(3) as State),
+        }
+    }
+
+    fn impact(&mut self, combination: &[Option<usize>], impact: Impact) -> Result<Option<f64>> {
+        Ok(match impact {
+            Impact::Sequence => {
+                let (haplotype, _) = combine(self.blocks, combination);
+                Some(self.effect_score(&haplotype)?.score())
+            }
+            Impact::Revel => self.annotation(combination)?.revel_score,
+            Impact::AlphaMissense => self.annotation(combination)?.alphamissense_score,
+            Impact::SpliceAi => self.annotation(combination)?.spliceai_score,
+            Impact::Acmg => self.annotation(combination)?.acmg_score,
+        })
+    }
+
+    // REVEL and AlphaMissense only score missense variants in the original frame.
+    fn needs_frame(&self, impact: Impact) -> bool {
+        matches!(impact, Impact::Revel | Impact::AlphaMissense)
+    }
+}
+
+/// Joins haplotypes of different phase blocks in genomic order. No read spans two blocks, so the
+/// junctions have no supporting reads.
+fn concat<'a>(parts: impl IntoIterator<Item = &'a Haplotype>) -> Haplotype {
+    let mut parts = parts.into_iter().collect_vec();
+    parts.sort_by_key(|(nodes, _)| nodes.first().map(|node| node.pos));
+    let mut nodes = Vec::new();
+    let mut supporting_reads = Vec::new();
+    for (part_nodes, part_reads) in parts {
+        if !nodes.is_empty() {
+            supporting_reads.push(HashMap::new());
+        }
+        nodes.extend(part_nodes.iter().cloned());
+        supporting_reads.extend(part_reads.iter().cloned());
+    }
+    (nodes, supporting_reads)
+}
+
+/// Joins the chosen haplotypes, keeping blocks without a choice at the reference.
+fn combine(blocks: &[Haplotypes], combination: &[Option<usize>]) -> Haplotype {
+    concat(
+        blocks
+            .iter()
+            .zip(combination)
+            .filter_map(|(haplotypes, choice)| Some(&haplotypes[(*choice)?])),
+    )
+}
+
 /// Represents an RNA sequence for a transcript and holds all variants on it
 #[derive(Clone, Debug)]
 pub(crate) struct RnaPath {
@@ -541,6 +754,7 @@ mod tests {
     use super::*;
     use crate::graph::duck::write_graphs;
     use crate::graph::node::Node;
+    use crate::graph::tests::phased_graph;
     use crate::graph::Edge;
     use crate::translation::amino_acids::AminoAcid;
     use bio::stats::Prob;
@@ -894,5 +1108,157 @@ chr1\tsource\tCDS\t400\t500\t.\t-\t0\tID=ENSP00000493377
         let graph = PathBuf::from("tests/resources/graph.duckdb");
         let transcripts = transcripts(&gff_file, &graph).unwrap();
         assert_eq!(transcripts.len(), 1)
+    }
+
+    /// Met, eight alanines and a stop.
+    const CODING: &[u8] = b"ATGGCAGCAGCAGCAGCAGCAGCAGCATAA";
+
+    fn transcript(strand: Strand, coding: Vec<Cds>) -> Transcript {
+        Transcript::new("test".to_string(), "test".to_string(), strand, coding)
+    }
+
+    fn score_graph(
+        transcript: &Transcript,
+        graph: VariantGraph,
+        reference: &HashMap<String, Vec<u8>>,
+        annotations: &HashMap<String, AnnotatedVariant>,
+    ) -> (Vec<Haplotypes>, Vec<HaplotypeScore>) {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("graph.duckdb");
+        write_graphs(HashMap::from([(transcript.target.clone(), graph)]), &path).unwrap();
+        let (blocks, samples) = transcript.block_haplotypes(&path, 50).unwrap();
+        let scores = transcript
+            .score_haplotypes(
+                &blocks,
+                &samples,
+                reference,
+                HaplotypeMetric::Minimum,
+                DistanceMetric::Grantham,
+                annotations,
+            )
+            .unwrap();
+        (blocks, scores)
+    }
+
+    #[test]
+    fn inserted_stop_ends_translation() {
+        let transcript = transcript(Strand::Forward, vec![Cds::new(0, 29, 0)]);
+        let reference = HashMap::from([("test".to_string(), CODING.to_vec())]);
+        // ATG|TAA|GCA: the stop is only before the codon of the SNV due to the insertion.
+        let block = |pos, reference_allele: &str, alternative_allele: &str| {
+            let node = Node::new(
+                NodeType::Variant,
+                pos,
+                reference_allele.to_string(),
+                alternative_allele.to_string(),
+            );
+            vec![(vec![node], vec![])]
+        };
+        let blocks = [block(2, "G", "GTAA"), block(4, "C", "T")];
+        let mut scorer = Scorer {
+            transcript: &transcript,
+            blocks: &blocks,
+            reference: &reference,
+            distance_metric: DistanceMetric::Grantham,
+            annotations: &HashMap::new(),
+            original_protein: Protein::from_transcript(&reference, &transcript).unwrap(),
+            stops: HashMap::new(),
+        };
+
+        assert_eq!(scorer.state_after(&[Some(0), None], 0).unwrap(), STOPPED);
+    }
+
+    #[test]
+    fn reference_without_coding_variants() {
+        let transcript = transcript(
+            Strand::Forward,
+            vec![Cds::new(0, 11, 0), Cds::new(18, 29, 0)],
+        );
+        let reference = HashMap::from([("test".to_string(), CODING.to_vec())]);
+        let intronic = [(14, "G", "T")];
+
+        let (_, scores) = score_graph(
+            &transcript,
+            phased_graph(&intronic, &[]),
+            &reference,
+            &HashMap::new(),
+        );
+
+        assert_eq!(scores.len(), 1);
+        assert_eq!(scores[0].0.score(), 0.0);
+    }
+
+    #[test]
+    fn blocks_sharing_a_codon_are_merged() {
+        let transcript = transcript(Strand::Forward, vec![Cds::new(0, 29, 0)]);
+        let reference = HashMap::from([("test".to_string(), CODING.to_vec())]);
+        let variants = [(3, "G", "T"), (4, "C", "A")];
+
+        let (blocks, _) = score_graph(
+            &transcript,
+            phased_graph(&variants, &[]),
+            &reference,
+            &HashMap::new(),
+        );
+
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].len(), 4);
+    }
+
+    #[test]
+    fn reverse_strand_block_order() {
+        let transcript = transcript(Strand::Reverse, vec![Cds::new(0, 29, 0)]);
+        let reference = HashMap::from([("test".to_string(), dna::revcomp(CODING))]);
+        // The deletion comes first in the transcript.
+        let variants = [(10, "G", "A"), (20, "CT", "C")];
+        let revel = |score| AnnotatedVariant {
+            revel_score: Some(score),
+            ..Default::default()
+        };
+        let annotations = HashMap::from([
+            ("11G>A".to_string(), revel(0.2)),
+            ("21CT>C".to_string(), revel(0.7)),
+        ]);
+
+        let (blocks, scores) = score_graph(
+            &transcript,
+            phased_graph(&variants, &[]),
+            &reference,
+            &annotations,
+        );
+
+        assert_eq!(blocks[0][0].0[0].pos, 20);
+        let both = scores
+            .iter()
+            .find(|score| score.0.hgvsg == "g.[11G>A;21CT>C]")
+            .unwrap();
+        // The SNV is behind the frameshift, so it does not count for REVEL.
+        assert_eq!(both.3.revel_score, Some(0.7));
+    }
+
+    #[test]
+    fn indels_that_cancel_out_are_aligned() {
+        let transcript = transcript(Strand::Forward, vec![Cds::new(0, 53, 0)]);
+        // Met, sixteen different residues and a stop.
+        let coding = b"ATGTGGGATAAACGTTTTCCCGAACATCAATGTTATAATCTGATTGTTACTTAA".to_vec();
+        let reference = HashMap::from([("test".to_string(), coding)]);
+        let original_protein = Protein::from_transcript(&reference, &transcript).unwrap();
+        // Deletes Trp and inserts Gly before the stop.
+        let haplotype = [
+            Node::new(NodeType::Variant, 2, "GTGG".to_string(), "G".to_string()),
+            Node::new(NodeType::Variant, 50, "T".to_string(), "TGGT".to_string()),
+        ];
+
+        let score = EffectScore::from_haplotype(
+            &reference,
+            &transcript,
+            &haplotype,
+            original_protein,
+            DistanceMetric::Grantham,
+        )
+        .unwrap()
+        .score();
+
+        assert!((score - 2.0 / 18.0).abs() < 1e-9, "{score}");
     }
 }

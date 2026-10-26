@@ -1,3 +1,4 @@
+pub(crate) mod combinations;
 pub(crate) mod duck;
 pub(crate) mod hgvs;
 pub(crate) mod node;
@@ -21,7 +22,8 @@ use petgraph::graph::NodeIndex;
 use petgraph::{Directed, Graph};
 use rust_htslib::bcf::{Read, Reader, Record};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::ops::RangeInclusive;
 use std::path::PathBuf;
 use varlociraptor::calling::variants::preprocessing::read_observations;
 use varlociraptor::utils::collect_variants::collect_variants;
@@ -273,24 +275,8 @@ impl VariantGraph {
     ) -> Result<()> {
         let sorted_positions: Vec<_> = nodes_by_index.keys().sorted().collect();
         for (&idx_a, &idx_b) in sorted_positions.iter().tuple_windows() {
-            // Check all edges between nodes at idx_a and idx_b
             // Remove all edges without read support if and only if there is at least one edge with read support between any nodes at idx_a and idx_b
-            let mut has_evidence = false;
-            for &node_a in &nodes_by_index[idx_a] {
-                for &node_b in &nodes_by_index[idx_b] {
-                    if let Some(edge) = self.graph.find_edge(node_a, node_b) {
-                        let edge_weight = self.graph.edge_weight(edge).unwrap();
-                        if edge_weight.supporting_reads.values().sum::<u32>() > 0 {
-                            has_evidence = true;
-                            break;
-                        }
-                    }
-                }
-                if has_evidence {
-                    break;
-                }
-            }
-            if has_evidence {
+            if self.has_read_support(&nodes_by_index[idx_a], &nodes_by_index[idx_b]) {
                 for &node_a in &nodes_by_index[idx_a] {
                     for &node_b in &nodes_by_index[idx_b] {
                         if let Some(edge) = self.graph.find_edge(node_a, node_b) {
@@ -426,23 +412,43 @@ impl VariantGraph {
             .collect()
     }
 
-    pub(crate) fn top_k_paths(&self, k: usize) -> Vec<HaplotypePath> {
-        let min_index = match self.graph.node_indices().map(|i| self.graph[i].index).min() {
-            Some(m) => m,
-            None => return vec![],
-        };
+    /// Whether a read links any of the `from` nodes to any of the `to` nodes.
+    fn has_read_support(&self, from: &[NodeIndex], to: &[NodeIndex]) -> bool {
+        from.iter().cartesian_product(to).any(|(&a, &b)| {
+            self.graph
+                .find_edge(a, b)
+                .is_some_and(|edge| self.graph[edge].supporting_reads.values().sum::<u32>() > 0)
+        })
+    }
 
-        let max_index = self
-            .graph
-            .node_indices()
-            .map(|i| self.graph[i].index)
-            .max()
-            .unwrap_or(0);
+    /// Runs of positions linked by reads, as ranges of position indices.
+    pub(crate) fn phase_blocks(&self) -> Vec<RangeInclusive<u32>> {
+        let mut nodes_by_index: BTreeMap<u32, Vec<NodeIndex>> = BTreeMap::new();
+        for node in self.graph.node_indices() {
+            nodes_by_index
+                .entry(self.graph[node].index)
+                .or_default()
+                .push(node);
+        }
+        let mut blocks: Vec<RangeInclusive<u32>> = Vec::new();
+        for (&index, nodes) in &nodes_by_index {
+            match blocks.last_mut() {
+                Some(block) if self.has_read_support(&nodes_by_index[block.end()], nodes) => {
+                    *block = *block.start()..=index
+                }
+                _ => blocks.push(index..=index),
+            }
+        }
+        blocks
+    }
 
+    /// The `k` best supported paths through the phase block.
+    pub(crate) fn top_k_paths(&self, block: &RangeInclusive<u32>, k: usize) -> Vec<HaplotypePath> {
+        let (first, last) = (*block.start(), *block.end());
         let start_nodes: Vec<NodeIndex> = self
             .graph
             .node_indices()
-            .filter(|&i| self.graph[i].index == min_index)
+            .filter(|&i| self.graph[i].index == first)
             .collect();
 
         // (path, no_zero_edges, min_nonzero_reads)
@@ -491,6 +497,7 @@ impl VariantGraph {
                     .graph
                     .neighbors(current)
                     .filter(|&n| self.graph[n].index > self.graph[current].index)
+                    .filter(|&n| self.graph[n].index <= last)
                     .filter(|&n| !path.contains(&n))
                     .collect();
 
@@ -518,20 +525,13 @@ impl VariantGraph {
         complete.sort_by(|a, b| b.1.cmp(&a.1).then(b.2.cmp(&a.2)));
         complete.retain(|(path, _, _)| {
             let last_node = *path.last().unwrap();
-            self.graph[last_node].index == max_index
+            self.graph[last_node].index == last
         });
         complete.truncate(k);
         complete
             .into_iter()
             .map(|(path, _, _)| HaplotypePath(path))
             .unique()
-            .collect()
-    }
-
-    pub(crate) fn reverse_top_k_paths(&self, k: usize) -> Vec<HaplotypePath> {
-        self.top_k_paths(k)
-            .iter()
-            .map(|path| HaplotypePath(path.0.iter().rev().cloned().collect()))
             .collect()
     }
 
@@ -894,5 +894,60 @@ mod tests {
         let reads = g.edge_reads(&idx);
         assert_eq!(reads.len(), 2);
         assert_eq!(reads[0].get("s1"), Some(&5));
+    }
+
+    /// A graph with a reference and a variant node per variant. `edges` links consecutive
+    /// variants as `(index, from_variant, to_variant, reads)`.
+    pub(crate) fn phased_graph(
+        variants: &[(i64, &str, &str)],
+        edges: &[(usize, bool, bool, u32)],
+    ) -> VariantGraph {
+        let mut graph = Graph::<Node, Edge, Directed>::new();
+        let nodes: Vec<[NodeIndex; 2]> = variants
+            .iter()
+            .enumerate()
+            .map(|(index, (pos, reference_allele, alternative_allele))| {
+                [NodeType::Reference, NodeType::Variant].map(|node_type| {
+                    graph.add_node(Node {
+                        node_type,
+                        reference_allele: reference_allele.to_string(),
+                        alternative_allele: alternative_allele.to_string(),
+                        vaf: HashMap::from([("s1".to_string(), 0.5)]),
+                        probs: EventProbs(HashMap::new()),
+                        pos: *pos,
+                        index: index as u32,
+                    })
+                })
+            })
+            .collect();
+        for &(index, from_variant, to_variant, reads) in edges {
+            graph.add_edge(
+                nodes[index][from_variant as usize],
+                nodes[index + 1][to_variant as usize],
+                Edge {
+                    supporting_reads: HashMap::from([("s1".to_string(), reads)]),
+                },
+            );
+        }
+        VariantGraph {
+            graph,
+            start: 0,
+            end: 0,
+            target: "test".to_string(),
+        }
+    }
+
+    #[test]
+    fn phase_blocks_split_without_reads() {
+        let snvs = (0..4).map(|pos| (pos, "A", "C")).collect_vec();
+        let mut edges = vec![(0, true, true, 5), (0, false, false, 3)];
+        edges.extend([(2, true, false, 2), (2, false, true, 4)]);
+        let graph = phased_graph(&snvs, &edges);
+
+        let blocks = graph.phase_blocks();
+
+        assert_eq!(blocks, vec![0..=1, 2..=3]);
+        assert_eq!(graph.top_k_paths(&blocks[0], 10).len(), 2);
+        assert_eq!(graph.top_k_paths(&blocks[0], 1).len(), 1);
     }
 }

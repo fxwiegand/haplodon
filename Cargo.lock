@@ -1581,6 +1581,7 @@ dependencies = [
  "json5",
  "log",
  "petgraph 0.8.3",
+ "rand 0.8.5",
  "rayon",
  "rust-htslib",
  "serde",
