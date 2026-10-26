@@ -225,6 +225,13 @@ impl Transcript {
         };
         let mut blocks: Vec<Haplotypes> = Vec::new();
         for block in graph.phase_blocks() {
+            // Blocks without coding variants, like intronic ones, don't change the protein.
+            let coding = graph.graph.node_weights().any(|node| {
+                block.contains(&node.index) && node.node_type.is_variant() && in_cds(node.pos)
+            });
+            if !coding {
+                continue;
+            }
             let paths = graph.top_k_paths(&block, max_haplotypes);
             if paths.is_empty() {
                 warn!(
@@ -239,19 +246,13 @@ impl Transcript {
                 .unique_by(|(nodes, _)| alleles(nodes))
                 .sorted_by_cached_key(|(nodes, _)| alleles(nodes))
                 .collect();
-            let coding = haplotypes
-                .iter()
-                .flat_map(|(nodes, _)| nodes)
-                .any(|node| node.node_type.is_variant());
-            if coding {
-                blocks.push(haplotypes);
-            }
+            blocks.push(haplotypes);
         }
         if self.strand == Strand::Reverse {
             blocks.reverse();
         }
         let mut blocks = self.merge_shared_codons(blocks);
-        // Without coding variants, the reads support the reference coding sequence.
+        // Without coding variants the coding sequence is the reference.
         if blocks.is_empty() && !graph.is_empty() {
             blocks.push(vec![(vec![], vec![])]);
         }
