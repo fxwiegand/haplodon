@@ -221,7 +221,7 @@ impl VariantGraph {
             last_position = position;
         }
         // Without fragment IDs all reads of a sample would count as one fragment.
-        if !supporting_reads.is_empty() && supporting_reads.keys().all(|(_, id)| id.is_none()) {
+        if supporting_reads.keys().any(|(_, id)| id.is_none()) {
             bail!("Observations lack fragment IDs, rerun `varlociraptor preprocess variants` with --report-fragment-ids");
         }
 
