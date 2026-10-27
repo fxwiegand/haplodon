@@ -36,6 +36,8 @@ jobs:
            override: true
            components: clippy
 
+       - uses: Swatinem/rust-cache@v2
+
        - name: Lint with clippy
          uses: actions-rs/clippy-check@v1
          with:
@@ -57,7 +59,7 @@ jobs:
           toolchain: stable
           override: true
       
-      - uses: Swatinem/rust-cache@v1.3.0
+      - uses: Swatinem/rust-cache@v2
 
       - uses: actions-rs/cargo@v1
         with:
@@ -80,10 +82,14 @@ jobs:
           toolchain: stable
           override: true
 
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-tarpaulin
+
       - name: Run cargo-tarpaulin
-        run: |
-          cargo install cargo-tarpaulin
-          cargo tarpaulin --out Xml
+        run: cargo tarpaulin --out Xml
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v4
