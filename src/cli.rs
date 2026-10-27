@@ -88,11 +88,16 @@ pub(crate) enum Command {
         genebe_cache: Option<PathBuf>,
 
         /// GeneBe account email for authenticated requests. Must be given together with `--genebe-api-key` and raises the anonymous request limit.
-        #[clap(long, requires = "genebe_api_key")]
+        #[clap(long, env = "GENEBE_EMAIL", requires = "genebe_api_key")]
         genebe_email: Option<String>,
 
         /// GeneBe API key for authenticated requests. Must be given together with `--genebe-email`.
-        #[clap(long, requires = "genebe_email")]
+        #[clap(
+            long,
+            env = "GENEBE_API_KEY",
+            hide_env_values = true,
+            requires = "genebe_email"
+        )]
         genebe_api_key: Option<String>,
 
         /// Genome build to use for fetching GeneBe annotations. Must be one of `hg38`, `hg19` or `t2t`.
@@ -106,11 +111,11 @@ pub(crate) enum Command {
     /// Download the GeneBe Hub databases that hg38 scores are read from
     Cache {
         /// GeneBe account email
-        #[clap(long)]
+        #[clap(long, env = "GENEBE_EMAIL")]
         genebe_email: String,
 
         /// GeneBe API key
-        #[clap(long)]
+        #[clap(long, env = "GENEBE_API_KEY", hide_env_values = true)]
         genebe_api_key: String,
 
         /// Directory to store the databases in
