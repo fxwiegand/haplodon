@@ -74,7 +74,7 @@ haplodon build --calls path/to/calls.vcf --observations sample1=path/to/observat
 
 ### Process
 
-Retrieves subgraphs for individual features from the provided GFF file and scores the haplotypes of each transcript. Variants linked by reads form phase blocks, within which the read-supported haplotypes are kept. Between phase blocks the phase is unknown, so for every block haplotype only the most and the least severe combination with the other blocks is reported, for each impact (sequence score, REVEL, AlphaMissense and SpliceAI). For hg38, variant scores are read from the GeneBe Hub databases if they were downloaded with `haplodon cache`, otherwise they come from the GeneBe API.
+Retrieves subgraphs for individual features from the provided GFF file and scores the haplotypes of each transcript. Variants linked by reads form phase blocks, within which the read-supported haplotypes are kept. Between phase blocks the phase is unknown, so for every block haplotype only the most and the least severe combination with the other blocks is reported, for each impact (sequence score, REVEL, AlphaMissense, SpliceAI and CADD). For hg38, variant scores are read from the GeneBe Hub databases if they were downloaded with `haplodon cache`, otherwise they come from the GeneBe API, which has no CADD scores. The Hub only has CADD scores for SNVs.
 
 **Options:**
 
@@ -94,7 +94,7 @@ haplodon process --features path/to/features.gff --reference path/to/reference.f
 
 ### Cache
 
-Downloads the GeneBe Hub databases (REVEL, AlphaMissense, SpliceAI and gnomAD, about 46 GB) that `process` reads hg38 scores from. This requires a GeneBe account, whose email and API key are read from `GENEBE_EMAIL` and `GENEBE_API_KEY`.
+Downloads the GeneBe Hub databases (REVEL, AlphaMissense, SpliceAI, CADD and gnomAD, about 100 GB) that `process` reads hg38 scores from. This requires a GeneBe account, whose email and API key are read from `GENEBE_EMAIL` and `GENEBE_API_KEY`.
 
 ```bash
 haplodon cache --genebe-store path/to/genebe

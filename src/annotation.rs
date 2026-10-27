@@ -14,7 +14,7 @@ use crate::graph::node::Node;
 use crate::graph::transcript::Transcript;
 
 /// GeneBe Hub databases with the hg38 scores, the column read from each and the field it fills.
-pub(crate) const HUB_DATABASES: [(&str, &str, Field); 5] = [
+pub(crate) const HUB_DATABASES: [(&str, &str, Field); 6] = [
     ("@genebe/revel:0.0.1", "score", |a| &mut a.revel_score),
     ("@genebe/alpha_missense:0.2.2", "am_pathogenicity", |a| {
         &mut a.alphamissense_score
@@ -28,6 +28,9 @@ pub(crate) const HUB_DATABASES: [(&str, &str, Field); 5] = [
     ("@genebe/gnomad_genomes4:0.0.4-4.1.0", "AF", |a| {
         &mut a.gnomad_genomes_af
     }),
+    ("@genebe/cadd_hg38:0.0.2-1.7.0", "phred", |a| {
+        &mut a.cadd_phred
+    }),
 ];
 
 type Field = fn(&mut VariantAnnotation) -> &mut Option<f64>;
@@ -40,6 +43,8 @@ pub(crate) struct VariantAnnotation {
     pub(crate) spliceai_max_score: Option<f64>,
     pub(crate) gnomad_exomes_af: Option<f64>,
     pub(crate) gnomad_genomes_af: Option<f64>,
+    /// Only in the GeneBe Hub, not in the API.
+    pub(crate) cadd_phred: Option<f64>,
 }
 
 /// A GeneBe API response, with a warning if the variant could not be annotated.
@@ -55,6 +60,7 @@ pub(crate) struct Annotation {
     pub(crate) revel_score: Option<f64>,
     pub(crate) spliceai_score: Option<f64>,
     pub(crate) alphamissense_score: Option<f64>,
+    pub(crate) cadd_phred: Option<f64>,
     #[serde(default)]
     pub(crate) gnomad_frequencies: HashMap<String, Option<f64>>,
 }
@@ -98,6 +104,7 @@ impl Annotation {
             revel_score: probabilistic_or(translated.iter().map(|a| a.revel_score)),
             spliceai_score: probabilistic_or(all.iter().map(|(_, a)| a.spliceai_max_score)),
             alphamissense_score: probabilistic_or(translated.iter().map(|a| a.alphamissense_score)),
+            cadd_phred: max_score(all.iter().map(|(_, a)| a.cadd_phred)),
             gnomad_frequencies: all
                 .iter()
                 .map(|(token, annotation)| (token.clone(), gnomad_af(annotation)))
@@ -299,9 +306,10 @@ mod tests {
         )
     }
 
-    fn annotated(revel_score: f64) -> VariantAnnotation {
+    fn annotated(score: f64) -> VariantAnnotation {
         VariantAnnotation {
-            revel_score: Some(revel_score),
+            revel_score: Some(score),
+            cadd_phred: Some(score),
             ..Default::default()
         }
     }
@@ -427,6 +435,8 @@ mod tests {
         let stopped = Annotation::from_haplotype(&haplotype, &transcript, &annotations, Some(3));
 
         assert_eq!(stopped.revel_score, Some(0.5));
+        // CADD also counts the variant after the stop.
+        assert_eq!(stopped.cadd_phred, Some(0.8));
         assert_eq!(stopped.gnomad_frequencies.len(), 2);
     }
 }
