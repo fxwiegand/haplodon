@@ -12,7 +12,7 @@ use crate::graph::node::{Node, NodeType};
 use crate::graph::paths::HaplotypePath;
 use crate::utils::bcf::extract_event_names;
 use crate::utils::NUMERICAL_EPSILON;
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use bio::stats::bayesian::bayes_factors::evidence::KassRaftery;
 use bio::stats::bayesian::BayesFactor;
 use bio::stats::{LogProb, PHREDProb};
@@ -123,10 +123,12 @@ impl VariantGraph {
             let observations = observations_records
                 .iter_mut()
                 .map(|(sample, record)| {
-                    let observations = read_observations(record).unwrap();
-                    (sample, observations.pileup.read_observations().clone())
+                    let observations = read_observations(record).context(
+                        "Observations do not match the format of this varlociraptor version, rerun `varlociraptor preprocess variants` with the latest varlociraptor",
+                    )?;
+                    Ok((sample, observations.pileup.read_observations().clone()))
                 })
-                .collect::<HashMap<_, _>>();
+                .collect::<Result<HashMap<_, _>>>()?;
 
             let _fragment_ids: HashSet<_> = observations
                 .iter()
