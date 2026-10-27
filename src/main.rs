@@ -121,7 +121,7 @@ impl Command {
                 let scores = Scores::new(*genome_build, Store::new(genebe_store), config)?;
                 let transcripts = transcripts(features, graph)?;
                 let annotations = annotate_coding_variants(graph, &transcripts, &scores)?;
-                create_scores(output)?;
+                create_scores(output, &scores.sources())?;
                 let total = transcripts.len();
                 transcripts.into_par_iter().enumerate().try_for_each(
                     |(i, transcript)| -> anyhow::Result<()> {

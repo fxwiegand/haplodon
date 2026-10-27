@@ -1,5 +1,5 @@
 use crate::annotation::Annotation;
-use crate::graph::duck::read_annotation_rows;
+use crate::graph::duck::{read_annotation_rows, read_score_sources};
 use crate::graph::score::HaplotypeFrequency;
 use anyhow::{anyhow, bail, Result};
 use rust_htslib::bcf::record::Numeric;
@@ -112,6 +112,9 @@ pub(crate) fn annotate(calls: &Path, scores: &Path, output: &Path) -> Result<()>
     header.push_record(GNOMAD_AF_INFO);
     header.push_record(HF_FORMAT);
     header.push_record(VERSION_LINE.as_bytes());
+    if let Some(sources) = read_score_sources(scores)? {
+        header.push_record(format!("##haplodonScoreSources={sources}").as_bytes());
+    }
     header.push_record(
         format!(
             "##haplodonAnnotateCommand=annotate --calls {} --scores {} --output {}",
@@ -474,7 +477,7 @@ mod tests {
     }
 
     fn write_scores_fixture(path: &Path) {
-        create_scores(path).unwrap();
+        create_scores(path, "@genebe/revel:0.0.1").unwrap();
         let transcript = Transcript::new(
             "ENSP00000TEST".to_string(),
             "chr1".to_string(),
@@ -547,6 +550,8 @@ mod tests {
         };
         assert!(haplodon.starts_with("T|missense_variant|ENSP00000TEST|c.[100C>T]|g.[7675089C>T]|"));
         assert!(haplodon.ends_with("|0.31|||"));
+        let vcf = std::fs::read_to_string(&output).unwrap();
+        assert!(vcf.contains("##haplodonScoreSources=@genebe/revel:0.0.1\n"));
         let maximum = annotated.info(b"HAPLODON_MAX").float().unwrap().unwrap()[0];
         let score: f32 = haplodon.split('|').nth(6).unwrap().parse().unwrap();
         assert!(maximum > 0.0 && maximum < 1.0);
@@ -584,7 +589,7 @@ mod tests {
 
         // Two transcripts carry the same variant with different divergence, so the
         // record lists both haplotypes, most divergent first.
-        create_scores(&scores).unwrap();
+        create_scores(&scores, "").unwrap();
         for (feature, altered, consequence) in [
             ("ENSP00000ZERO", AminoAcid::Leucine, Consequence::Synonymous),
             ("ENSP00000HIGH", AminoAcid::Valine, Consequence::Missense),
