@@ -90,7 +90,6 @@ impl Command {
                 genome_build,
                 genebe_store,
             } => {
-                create_scores(output)?;
                 info!("Reading reference genome from {reference:?}");
                 let reference_genome = utils::fasta::read_reference(reference);
                 // Scores are looked up by position, so the reference has to be of the genome build.
@@ -129,6 +128,7 @@ impl Command {
                 )?;
                 let transcripts = transcripts(features, graph)?;
                 let annotations = annotate_coding_variants(graph, &transcripts, &scores)?;
+                create_scores(output)?;
                 let total = transcripts.len();
                 transcripts.into_par_iter().enumerate().try_for_each(
                     |(i, transcript)| -> anyhow::Result<()> {
