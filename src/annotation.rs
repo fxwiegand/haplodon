@@ -221,10 +221,10 @@ fn fetch(
             ) {
                 (Ok(batch), _) => break responses.extend(batch),
                 (
-                    Err(GeneBearError::ApiServerError { .. } | GeneBearError::Http(_)),
+                    Err(e @ (GeneBearError::ApiServerError { .. } | GeneBearError::Http(_))),
                     Some(delay),
                 ) => {
-                    warn!("GeneBe failed, retrying in {delay} s");
+                    warn!("GeneBe failed, retrying in {delay} s: {e}");
                     thread::sleep(Duration::from_secs(delay));
                 }
                 (Err(e), _) => return Err(e.into()),
