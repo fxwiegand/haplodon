@@ -25,7 +25,7 @@ csv = "1.4.0"
 log = "0.4.31"
 rayon = "1.12.0"
 env_logger = "0.11.6"
-genebears = "1.0.0"
+genebears = "1.0.1"
 tokio = { version = "1", features = ["rt"] }
 # Shows the download progress of genebears with --verbose.
 tracing = { version = "0.1", features = ["log"] }
