@@ -98,6 +98,24 @@ pub(crate) enum Command {
         /// Genome build to use for fetching GeneBe annotations. Must be one of `hg38`, `hg19` or `t2t`.
         #[clap(long, default_value = "hg38")]
         genome_build: genebears::Genome,
+
+        /// Directory of GeneBe Hub databases as downloaded by `haplodon cache`. hg38 scores are read from there if all databases are installed, otherwise from the GeneBe API.
+        #[clap(long, default_value_os_t = genebears::Store::default_root().unwrap_or_default())]
+        genebe_store: PathBuf,
+    },
+    /// Download the GeneBe Hub databases that hg38 scores are read from
+    Cache {
+        /// GeneBe account email
+        #[clap(long)]
+        genebe_email: String,
+
+        /// GeneBe API key
+        #[clap(long)]
+        genebe_api_key: String,
+
+        /// Directory to store the databases in
+        #[clap(long, default_value_os_t = genebears::Store::default_root().unwrap_or_default())]
+        genebe_store: PathBuf,
     },
     /// Output all distinct peptides from the given features to a fastq file per given CDS in the feature file
     Peptides {

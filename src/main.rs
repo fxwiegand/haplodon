@@ -1,3 +1,4 @@
+use crate::annotation::{annotate_coding_variants, Scores, HUB_DATABASES};
 use crate::cli::{Command, GeneBeCredentials, Haplodon};
 use crate::graph::duck::{create_scores, read_scores, write_graphs, write_scores};
 use crate::graph::peptide::write_peptides;
@@ -6,11 +7,11 @@ use crate::graph::VariantGraph;
 use crate::show::render_scores;
 use crate::utils::bcf::get_targets;
 use crate::utils::create_output_dir;
-use anyhow::Result;
+use anyhow::{bail, Result};
 use bio::stats::{LogProb, Prob};
 use clap::Parser;
 use env_logger::Env;
-use genebears::{ClientConfig, GeneBears};
+use genebears::{ClientConfig, GeneBears, Genome, Hub, Store};
 use log::{info, warn};
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
@@ -87,10 +88,24 @@ impl Command {
                 genebe_email,
                 genebe_api_key,
                 genome_build,
+                genebe_store,
             } => {
                 create_scores(output)?;
                 info!("Reading reference genome from {reference:?}");
                 let reference_genome = utils::fasta::read_reference(reference);
+                // Scores are looked up by position, so the reference has to be of the genome build.
+                let chr1 = reference_genome.get("1").or(reference_genome.get("chr1"));
+                let length = match genome_build {
+                    Genome::Hg38 => 248_956_422,
+                    Genome::Hg19 => 249_250_621,
+                    Genome::T2t => 248_387_328,
+                };
+                if chr1.is_some_and(|chr1| chr1.len() != length) {
+                    bail!(
+                        "The reference is not {}, set --genome-build",
+                        genome_build.as_str()
+                    );
+                }
                 let write_lock = Arc::new(Mutex::new(()));
                 let credentials = match (genebe_email, genebe_api_key) {
                     (Some(email), Some(api_key)) => Some(GeneBeCredentials {
@@ -107,8 +122,13 @@ impl Command {
                     config.email = Some(credentials.email.clone());
                     config.api_key = Some(credentials.api_key.clone());
                 }
-                let client = Arc::new(Mutex::new(GeneBears::new(config)?));
+                let scores = Scores::new(
+                    *genome_build,
+                    Store::new(genebe_store),
+                    GeneBears::new(config)?,
+                )?;
                 let transcripts = transcripts(features, graph)?;
+                let annotations = annotate_coding_variants(graph, &transcripts, &scores)?;
                 let total = transcripts.len();
                 transcripts.into_par_iter().enumerate().try_for_each(
                     |(i, transcript)| -> anyhow::Result<()> {
@@ -130,14 +150,15 @@ impl Command {
                             }
                             return Ok(());
                         }
-                        let scores = transcript.scores(
-                            graph,
+                        let (blocks, samples) =
+                            transcript.block_haplotypes(graph, *max_haplotypes_per_block)?;
+                        let scores = transcript.score_haplotypes(
+                            &blocks,
+                            &samples,
                             &reference_genome,
                             *haplotype_metric,
-                            *max_haplotypes_per_block,
                             *distance_metric,
-                            *genome_build,
-                            &client,
+                            &annotations[&transcript.target],
                         )?;
                         info!(
                             "Writing scores for {} different haplotypes for transcript {}",
@@ -149,6 +170,18 @@ impl Command {
                         Ok(())
                     },
                 )?;
+            }
+            Command::Cache {
+                genebe_email,
+                genebe_api_key,
+                genebe_store,
+            } => {
+                let hub = Hub::new(genebe_email, genebe_api_key)?;
+                let store = Store::new(genebe_store);
+                let rt = tokio::runtime::Runtime::new()?;
+                for (id, _, _) in HUB_DATABASES {
+                    rt.block_on(hub.pull(&id.parse()?, &store))?;
+                }
             }
             Command::Peptides {
                 features,
