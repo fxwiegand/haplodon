@@ -82,8 +82,7 @@ pub(crate) enum Command {
         )]
         max_haplotypes_per_block: usize,
 
-        /// Optional path to a cache file for GeneBe annotations. If not provided, annotations will be fetched from the GeneBe API and cached in memory during runtime.
-        /// Providing a cache file allows reusing annotations across multiple runs and can speed up processing as well as reduce load on the GeneBe API which comes with limits.
+        /// Optional cache file for GeneBe API responses, to reuse them across runs and stay within the API limits. Not used with the GeneBe Hub databases.
         #[clap(long)]
         genebe_cache: Option<PathBuf>,
 
@@ -104,7 +103,7 @@ pub(crate) enum Command {
         #[clap(long, default_value = "hg38")]
         genome_build: genebears::Genome,
 
-        /// Directory of GeneBe Hub databases as downloaded by `haplodon cache`. hg38 scores are read from there if all databases are installed, otherwise from the GeneBe API.
+        /// Directory of GeneBe Hub databases as downloaded by `haplodon cache`. hg38 scores are read from there if the databases are installed, and from the GeneBe API if none are.
         #[clap(long, env = "GENEBE_STORE", default_value_os_t = genebears::Store::default_root().unwrap_or_default())]
         genebe_store: PathBuf,
     },
