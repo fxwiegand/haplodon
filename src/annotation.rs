@@ -42,6 +42,14 @@ pub(crate) struct VariantAnnotation {
     pub(crate) gnomad_genomes_af: Option<f64>,
 }
 
+/// A GeneBe API response, with a warning if the variant could not be annotated.
+#[derive(Deserialize)]
+struct GeneBeResponse {
+    warning: Option<String>,
+    #[serde(flatten)]
+    scores: VariantAnnotation,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct Annotation {
     pub(crate) revel_score: Option<f64>,
@@ -199,12 +207,6 @@ fn fetch(
     genome: Genome,
     client: &GeneBears,
 ) -> Result<Vec<Option<VariantAnnotation>>> {
-    #[derive(Deserialize)]
-    struct Response {
-        warning: Option<String>,
-        #[serde(flatten)]
-        scores: VariantAnnotation,
-    }
     let rt = tokio::runtime::Runtime::new()?;
     let mut responses = Vec::with_capacity(variants.len());
     // As many variants as GeneBe takes per request.
@@ -214,7 +216,7 @@ fn fetch(
         loop {
             let options = AnnotateOptions::default();
             match (
-                rt.block_on(client.annotate(batch, genome, options)),
+                rt.block_on(client.annotate::<GeneBeResponse>(batch, genome, options)),
                 delays.next(),
             ) {
                 (Ok(batch), _) => break responses.extend(batch),
@@ -232,15 +234,13 @@ fn fetch(
     Ok(variants
         .iter()
         .zip(responses)
-        .map(
-            |(variant, response): (_, Response)| match response.warning {
-                Some(warning) => {
-                    warn!("Ignoring GeneBe annotation for {variant:?}: {warning}");
-                    None
-                }
-                None => Some(response.scores),
-            },
-        )
+        .map(|(variant, response)| match response.warning {
+            Some(warning) => {
+                warn!("Ignoring GeneBe annotation for {variant:?}: {warning}");
+                None
+            }
+            None => Some(response.scores),
+        })
         .collect())
 }
 
