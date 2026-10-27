@@ -1,6 +1,6 @@
 use anyhow::{bail, Context, Result};
 use bio::bio_types::strand::Strand;
-use genebears::{AnnotateOptions, GeneBearError, GeneBears, Genome, Store, Variant};
+use genebears::{AnnotateOptions, ClientConfig, GeneBearError, GeneBears, Genome, Store, Variant};
 use itertools::Itertools;
 use log::{info, warn};
 use serde::{Deserialize, Serialize};
@@ -115,7 +115,7 @@ pub(crate) enum Scores {
 
 impl Scores {
     /// The GeneBe Hub databases in the store for hg38 if they are installed, otherwise the API.
-    pub(crate) fn new(genome: Genome, store: Store, client: GeneBears) -> Result<Self> {
+    pub(crate) fn new(genome: Genome, store: Store, config: ClientConfig) -> Result<Self> {
         let installed = HUB_DATABASES
             .iter()
             .filter(|(id, _, _)| id.parse().is_ok_and(|id| store.get(&id).is_ok()))
@@ -126,7 +126,7 @@ impl Scores {
                 "GeneBe Hub databases in {} are incomplete, rerun `haplodon cache`",
                 store.root().display()
             ),
-            _ => Ok(Scores::Api(Box::new(client), genome)),
+            _ => Ok(Scores::Api(Box::new(GeneBears::new(config)?), genome)),
         }
     }
 }

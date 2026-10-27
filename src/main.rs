@@ -11,7 +11,7 @@ use anyhow::{bail, Result};
 use bio::stats::{LogProb, Prob};
 use clap::Parser;
 use env_logger::Env;
-use genebears::{ClientConfig, GeneBears, Genome, Hub, Store};
+use genebears::{ClientConfig, Genome, Hub, Store};
 use log::{info, warn};
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
@@ -121,11 +121,7 @@ impl Command {
                     config.email = Some(credentials.email.clone());
                     config.api_key = Some(credentials.api_key.clone());
                 }
-                let scores = Scores::new(
-                    *genome_build,
-                    Store::new(genebe_store),
-                    GeneBears::new(config)?,
-                )?;
+                let scores = Scores::new(*genome_build, Store::new(genebe_store), config)?;
                 let transcripts = transcripts(features, graph)?;
                 let annotations = annotate_coding_variants(graph, &transcripts, &scores)?;
                 create_scores(output)?;
