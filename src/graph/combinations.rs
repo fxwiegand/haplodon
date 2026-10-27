@@ -302,7 +302,7 @@ fn more_extreme<T: PartialOrd>(new: T, old: T, maximise: bool) -> bool {
 mod tests {
     use super::*;
     use rand::rngs::StdRng;
-    use rand::{Rng, SeedableRng};
+    use rand::{RngExt, SeedableRng};
 
     // Per block and haplotype the frameshift (3 stops translation) and the effect in each frame.
     struct Toy(Vec<Vec<(usize, [f64; 3])>>);
@@ -353,11 +353,11 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(1);
         for _ in 0..200 {
             let mut blocks = Vec::new();
-            for _ in 0..rng.gen_range(1..7) {
+            for _ in 0..rng.random_range(1..7) {
                 let mut haplotypes = Vec::new();
-                for _ in 0..rng.gen_range(1..4) {
-                    let effect = std::array::from_fn(|_| rng.gen_range(0..5) as f64 / 4.0);
-                    haplotypes.push((rng.gen_range(0..4), effect));
+                for _ in 0..rng.random_range(1..4) {
+                    let effect = std::array::from_fn(|_| rng.random_range(0..5) as f64 / 4.0);
+                    haplotypes.push((rng.random_range(0..4), effect));
                 }
                 blocks.push(haplotypes);
             }

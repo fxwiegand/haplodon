@@ -224,7 +224,8 @@ impl EffectScore {
                 (-d * 10.0).round() as i32
             };
 
-            let gap_open = -8;
+            // bio 4 no longer charges gap_extend for the first base of a gap.
+            let gap_open = -9;
             let gap_extend = -1;
 
             let mut aligner =
