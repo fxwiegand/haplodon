@@ -54,6 +54,10 @@ pub(crate) fn extreme_combinations<S: Scoring>(
     let mut combinations = Vec::new();
     for impact in 0..S::IMPACTS.len() {
         search.score_candidates(impact, exhaustive)?;
+        // An impact without any value, e.g. CADD from the GeneBe API, has no extremes.
+        if search.values[impact].values().all(Option::is_none) {
+            continue;
+        }
         for maximise in [true, false] {
             combinations.extend(search.select(impact, maximise)?);
         }

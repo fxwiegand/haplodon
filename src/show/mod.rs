@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 /// Writes given per-haplotype scores into a single TSV file with the columns:
 /// `transcript`, `score`, `haplotype`, annotation score columns (`revel_score`,
-/// `spliceai_score`, `alphamissense_score`) and two columns
+/// `spliceai_score`, `alphamissense_score`, `cadd_phred`) and two columns
 /// per sample containing the frequency and supporting read information. Each row
 /// corresponds to one (score, per-sample) pair for a given transcript.
 ///
@@ -43,6 +43,7 @@ pub(crate) fn render_scores(
         "revel_score".to_string(),
         "spliceai_score".to_string(),
         "alphamissense_score".to_string(),
+        "cadd_phred".to_string(),
     ];
     if report_protein {
         headers.push("protein".to_string());
@@ -67,6 +68,9 @@ pub(crate) fn render_scores(
                     .map_or("".to_string(), |s| s.to_string()),
                 annotation
                     .alphamissense_score
+                    .map_or("".to_string(), |s| s.to_string()),
+                annotation
+                    .cadd_phred
                     .map_or("".to_string(), |s| s.to_string()),
             ];
             if report_protein {
@@ -111,6 +115,7 @@ mod tests {
             revel_score: Some(0.8),
             spliceai_score: Some(0.7),
             alphamissense_score: Some(0.6),
+            cadd_phred: Some(25.0),
             gnomad_frequencies: HashMap::new(),
         };
         let scores = HashMap::from([(

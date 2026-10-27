@@ -518,6 +518,7 @@ enum Impact {
     Revel,
     AlphaMissense,
     SpliceAi,
+    Cadd,
 }
 
 impl Scoring for Scorer<'_> {
@@ -527,6 +528,7 @@ impl Scoring for Scorer<'_> {
         Impact::Revel,
         Impact::AlphaMissense,
         Impact::SpliceAi,
+        Impact::Cadd,
     ];
 
     // Stopped if a stop codon lies before the next block, otherwise the frame offset.
@@ -554,6 +556,7 @@ impl Scoring for Scorer<'_> {
             Impact::Revel => self.annotation(combination)?.revel_score,
             Impact::AlphaMissense => self.annotation(combination)?.alphamissense_score,
             Impact::SpliceAi => self.annotation(combination)?.spliceai_score,
+            Impact::Cadd => self.annotation(combination)?.cadd_phred,
         })
     }
 

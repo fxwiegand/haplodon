@@ -629,6 +629,7 @@ mod tests {
             revel_score: Some(0.8),
             spliceai_score: Some(0.7),
             alphamissense_score: Some(0.6),
+            cadd_phred: Some(25.0),
             gnomad_frequencies: HashMap::new(),
         };
         let scores = vec![(effect_score, frequencies, supporting_reads, annotion)];
