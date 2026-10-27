@@ -94,16 +94,15 @@ impl Command {
                 let reference_genome = utils::fasta::read_reference(reference);
                 // Scores are looked up by position, so the reference has to be of the genome build.
                 let chr1 = reference_genome.get("1").or(reference_genome.get("chr1"));
-                let length = match genome_build {
-                    Genome::Hg38 => 248_956_422,
-                    Genome::Hg19 => 249_250_621,
-                    Genome::T2t => 248_387_328,
+                let build = match chr1.map(|chr1| chr1.len()) {
+                    Some(248_956_422) => Some(Genome::Hg38),
+                    Some(249_250_621) => Some(Genome::Hg19),
+                    Some(248_387_328) => Some(Genome::T2t),
+                    _ => None,
                 };
-                if chr1.is_some_and(|chr1| chr1.len() != length) {
-                    bail!(
-                        "The reference is not {}, set --genome-build",
-                        genome_build.as_str()
-                    );
+                if let Some(build) = build.filter(|build| build != genome_build) {
+                    let build = build.as_str();
+                    bail!("The reference looks like {build}, set --genome-build {build}");
                 }
                 let write_lock = Arc::new(Mutex::new(()));
                 let credentials = match (genebe_email, genebe_api_key) {
