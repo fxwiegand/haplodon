@@ -136,6 +136,14 @@ impl Scores {
             _ => Ok(Scores::Api(Box::new(GeneBears::new(config)?), genome)),
         }
     }
+
+    /// The GeneBe Hub databases or the API the scores come from.
+    pub(crate) fn sources(&self) -> String {
+        match self {
+            Scores::Hub(_) => HUB_DATABASES.map(|(id, _, _)| id).join(","),
+            Scores::Api(_, genome) => format!("GeneBe API ({})", genome.as_str()),
+        }
+    }
 }
 
 /// Annotates the coding variants of the transcripts once per target, by HGVS token.

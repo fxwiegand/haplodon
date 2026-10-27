@@ -183,12 +183,15 @@ pub(crate) fn variant_nodes(path: &Path, target: &str) -> Result<Vec<Node>> {
         .collect::<Result<_, _>>()?)
 }
 
-pub(crate) fn create_scores(output_path: &Path) -> Result<()> {
+/// Creates the scores table, with the sources of the variant scores as its comment.
+pub(crate) fn create_scores(output_path: &Path, sources: &str) -> Result<()> {
     let db = Connection::open(output_path)?;
     db.execute(
         "CREATE TABLE scores (transcript String, score FLOAT, frequencies String, hgvsc String, hgvsg String, hgvsg_full String, supporting_reads String, annotation String, protein String, consequence String)",
         [],
     )?;
+    let sources = sources.replace('\'', "''");
+    db.execute(&format!("COMMENT ON TABLE scores IS '{sources}'"), [])?;
     db.close().unwrap();
     Ok(())
 }
@@ -220,6 +223,13 @@ pub(crate) fn write_scores(
     transaction.commit()?;
     db.close().unwrap();
     Ok(())
+}
+
+/// The sources of the variant scores, unless the scores were written by an older version.
+pub(crate) fn read_score_sources(path: &Path) -> Result<Option<String>> {
+    let db = Connection::open(path)?;
+    let query = "SELECT comment FROM duckdb_tables() WHERE table_name = 'scores'";
+    Ok(db.query_row(query, [], |row| row.get(0))?)
 }
 
 pub(crate) fn read_scores(
@@ -603,7 +613,7 @@ mod tests {
     fn test_scores() {
         let temp_dir = tempfile::tempdir().unwrap();
         let output_path = temp_dir.path().join("scores.duckdb");
-        create_scores(output_path.as_path()).unwrap();
+        create_scores(output_path.as_path(), "").unwrap();
         assert!(output_path.exists());
         let transcript = Transcript::new(
             "some feature".to_string(),
