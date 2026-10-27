@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.20.0](https://github.com/fxwiegand/haplodon/compare/v0.19.1...v0.20.0) (2026-10-27)
+
+
+### Features
+
+* Add CADD as an impact for hg38 ([#332](https://github.com/fxwiegand/haplodon/issues/332)) ([b859606](https://github.com/fxwiegand/haplodon/commit/b8596068054bbbb016fffe59e639354d8fc50be7))
+* Annotate variants once per target and read hg38 scores from GeneBe Hub ([#330](https://github.com/fxwiegand/haplodon/issues/330)) ([83d28f3](https://github.com/fxwiegand/haplodon/commit/83d28f3653ecac409062a97b5bf7de55f62485fc))
+* Bound haplotype combinations across phase blocks ([#325](https://github.com/fxwiegand/haplodon/issues/325)) ([8a95c52](https://github.com/fxwiegand/haplodon/commit/8a95c52394cddecd1a1ad84cdecd4300f2b9bbd3))
+* Record the sources of the variant scores ([#334](https://github.com/fxwiegand/haplodon/issues/334)) ([653ce01](https://github.com/fxwiegand/haplodon/commit/653ce01db773e4bd30d4c1015928af7b1796e913))
+
+
+### Bug Fixes
+
+* Fail on observations without fragment IDs ([#326](https://github.com/fxwiegand/haplodon/issues/326)) ([dd042cd](https://github.com/fxwiegand/haplodon/commit/dd042cdc22c20e1aa609fa28965a1cc24d4002bc))
+
+
+### Performance Improvements
+
+* Load only the requested subgraph in feature_graph ([#318](https://github.com/fxwiegand/haplodon/issues/318)) ([8ee2029](https://github.com/fxwiegand/haplodon/commit/8ee2029a10dd4b8872bb681b1fcb2545b86d5800))
+
 ## [0.19.1](https://github.com/fxwiegand/haplodon/compare/v0.19.0...v0.19.1) (2026-09-28)
 
 
