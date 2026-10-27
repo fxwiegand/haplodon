@@ -92,7 +92,6 @@ impl Node {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn new(
         node_type: NodeType,
         pos: i64,

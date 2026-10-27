@@ -1,19 +1,58 @@
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
 use bio::bio_types::strand::Strand;
-use genebears::{AnnotateOptions, AnnotatedVariant, GeneBearError, GeneBears, Genome, Variant};
+use genebears::{AnnotateOptions, ClientConfig, GeneBearError, GeneBears, Genome, Store, Variant};
 use itertools::Itertools;
-use log::warn;
+use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::path::Path;
+use std::thread;
+use std::time::Duration;
 
+use crate::graph::duck::variant_nodes;
 use crate::graph::node::Node;
 use crate::graph::transcript::Transcript;
+
+/// GeneBe Hub databases with the hg38 scores, the column read from each and the field it fills.
+pub(crate) const HUB_DATABASES: [(&str, &str, Field); 5] = [
+    ("@genebe/revel:0.0.1", "score", |a| &mut a.revel_score),
+    ("@genebe/alpha_missense:0.2.2", "am_pathogenicity", |a| {
+        &mut a.alphamissense_score
+    }),
+    ("@genebe/spliceai:0.0.1", "max", |a| {
+        &mut a.spliceai_max_score
+    }),
+    ("@genebe/gnomad_exomes4:0.0.4-4.1.0", "AF", |a| {
+        &mut a.gnomad_exomes_af
+    }),
+    ("@genebe/gnomad_genomes4:0.0.4-4.1.0", "AF", |a| {
+        &mut a.gnomad_genomes_af
+    }),
+];
+
+type Field = fn(&mut VariantAnnotation) -> &mut Option<f64>;
+
+/// Scores of a single variant, named like the fields of the GeneBe API.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub(crate) struct VariantAnnotation {
+    pub(crate) revel_score: Option<f64>,
+    pub(crate) alphamissense_score: Option<f64>,
+    pub(crate) spliceai_max_score: Option<f64>,
+    pub(crate) gnomad_exomes_af: Option<f64>,
+    pub(crate) gnomad_genomes_af: Option<f64>,
+}
+
+/// A GeneBe API response, with a warning if the variant could not be annotated.
+#[derive(Deserialize)]
+struct GeneBeResponse {
+    warning: Option<String>,
+    #[serde(flatten)]
+    scores: VariantAnnotation,
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct Annotation {
     pub(crate) revel_score: Option<f64>,
-    pub(crate) acmg_score: Option<f64>,
     pub(crate) spliceai_score: Option<f64>,
     pub(crate) alphamissense_score: Option<f64>,
     #[serde(default)]
@@ -26,7 +65,7 @@ impl Annotation {
     pub(crate) fn from_haplotype(
         haplotype: &[Node],
         transcript: &Transcript,
-        annotations: &HashMap<String, AnnotatedVariant>,
+        annotations: &HashMap<String, VariantAnnotation>,
         stop: Option<usize>,
     ) -> Self {
         let mut variants: Vec<_> = haplotype
@@ -57,7 +96,6 @@ impl Annotation {
 
         Self {
             revel_score: probabilistic_or(translated.iter().map(|a| a.revel_score)),
-            acmg_score: max_score(all.iter().map(|(_, a)| a.acmg_score)),
             spliceai_score: probabilistic_or(all.iter().map(|(_, a)| a.spliceai_max_score)),
             alphamissense_score: probabilistic_or(translated.iter().map(|a| a.alphamissense_score)),
             gnomad_frequencies: all
@@ -68,69 +106,145 @@ impl Annotation {
     }
 }
 
-/// GeneBe annotations by HGVS token, skipping variants GeneBe warns about.
-pub(crate) fn fetch_annotations(
-    variants: &[&Node],
-    target: &str,
-    genome_build: Genome,
-    genebe_client: &Arc<Mutex<GeneBears>>,
-) -> Result<HashMap<String, AnnotatedVariant>> {
-    if variants.is_empty() {
-        return Ok(HashMap::new());
-    }
-    let requests = variants
-        .iter()
-        .map(|node| {
-            Variant::new(
-                target.to_string(),
-                node.pos as u64 + 1, // GeneBe expects 1-based positions
-                node.reference_allele.to_string(),
-                node.alternative_allele.to_string(),
-            )
-        })
-        .collect_vec();
+/// Where the scores of the variants come from.
+pub(crate) enum Scores {
+    /// The local GeneBe Hub databases, for hg38.
+    Hub(Store),
+    Api(Box<GeneBears>, Genome),
+}
 
-    let results = {
-        let client = genebe_client.lock().unwrap();
-        let rt = tokio::runtime::Runtime::new()?;
-        rt.block_on(client.annotate_variants_chunked(
-            &requests,
-            genome_build,
-            AnnotateOptions::default(),
-        ))
-    };
-
-    let results = match results {
-        Ok(r) => r,
-        Err(GeneBearError::ApiServerError { message, .. }) => {
-            warn!(
-                "GeneBe failed to annotate variants for {}: {}. Scores will be absent.",
-                target, message
-            );
-            vec![]
+impl Scores {
+    /// The GeneBe Hub databases in the store for hg38 if they are installed, otherwise the API.
+    pub(crate) fn new(genome: Genome, store: Store, config: ClientConfig) -> Result<Self> {
+        let installed = HUB_DATABASES
+            .iter()
+            .filter(|(id, _, _)| id.parse().is_ok_and(|id| store.get(&id).is_ok()))
+            .count();
+        match genome {
+            Genome::Hg38 if installed == HUB_DATABASES.len() => Ok(Scores::Hub(store)),
+            Genome::Hg38 if installed > 0 => bail!(
+                "GeneBe Hub databases in {} are incomplete, rerun `haplodon cache`",
+                store.root().display()
+            ),
+            _ => Ok(Scores::Api(Box::new(GeneBears::new(config)?), genome)),
         }
-        Err(e) => return Err(anyhow::Error::from(e)),
-    };
+    }
+}
 
+/// Annotates the coding variants of the transcripts once per target, by HGVS token.
+pub(crate) fn annotate_coding_variants(
+    graph: &Path,
+    transcripts: &[Transcript],
+    scores: &Scores,
+) -> Result<HashMap<String, HashMap<String, VariantAnnotation>>> {
+    transcripts
+        .iter()
+        .into_group_map_by(|transcript| transcript.target.as_str())
+        .into_iter()
+        .map(|(target, transcripts)| {
+            let nodes = coding_variants(variant_nodes(graph, target)?, &transcripts);
+            let variants = nodes
+                .iter()
+                .map(|node| {
+                    Variant::new(
+                        target,
+                        node.pos as u64 + 1, // GeneBe expects 1-based positions
+                        node.reference_allele.as_str(),
+                        node.alternative_allele.as_str(),
+                    )
+                })
+                .collect_vec();
+            info!("Annotating {} coding variants on {target}", variants.len());
+            let annotations = match scores {
+                Scores::Hub(store) => lookup(&variants, store)?,
+                Scores::Api(client, genome) => fetch(&variants, *genome, client)
+                    .with_context(|| format!("GeneBe failed to annotate variants on {target}"))?,
+            };
+            let annotations = nodes
+                .iter()
+                .zip(annotations)
+                .filter_map(|(node, annotation)| Some((node.hgvsg_token(), annotation?)))
+                .collect();
+            Ok((target.to_string(), annotations))
+        })
+        .collect()
+}
+
+/// The variants, sorted by position, that lie in a coding sequence of the transcripts.
+fn coding_variants(variants: Vec<Node>, transcripts: &[&Transcript]) -> Vec<Node> {
+    let mut coding = vec![false; variants.len()];
+    for cds in transcripts.iter().flat_map(|t| &t.coding_sequences) {
+        let start = variants.partition_point(|node| node.pos < cds.start as i64);
+        let end = variants.partition_point(|node| node.pos <= cds.end as i64);
+        coding[start..end].fill(true);
+    }
+    variants
+        .into_iter()
+        .zip(coding)
+        .filter_map(|(node, coding)| coding.then_some(node))
+        .collect()
+}
+
+/// Scores from the local GeneBe Hub databases, the highest of several rows, e.g. per gene.
+fn lookup(variants: &[Variant], store: &Store) -> Result<Vec<Option<VariantAnnotation>>> {
+    let mut annotations = vec![VariantAnnotation::default(); variants.len()];
+    for (id, column, field) in HUB_DATABASES {
+        let rows: Vec<Vec<HashMap<String, Option<f64>>>> =
+            store
+                .get(&id.parse()?)?
+                .lookup(variants, Genome::Hg38, &[column])?;
+        for (annotation, rows) in annotations.iter_mut().zip(rows) {
+            *field(annotation) = rows.iter().filter_map(|row| row[column]).reduce(f64::max);
+        }
+    }
+    Ok(annotations.into_iter().map(Some).collect())
+}
+
+/// Scores from the GeneBe API, without the ones GeneBe warns about, e.g. for a wrong reference
+/// allele. Server and network errors are retried per batch.
+fn fetch(
+    variants: &[Variant],
+    genome: Genome,
+    client: &GeneBears,
+) -> Result<Vec<Option<VariantAnnotation>>> {
+    let rt = tokio::runtime::Runtime::new()?;
+    let mut responses = Vec::with_capacity(variants.len());
+    // As many variants as GeneBe takes per request.
+    for batch in variants.chunks(1000) {
+        // Seconds to wait before asking GeneBe again after a server or network error.
+        let mut delays = [10, 30, 60].into_iter();
+        loop {
+            let options = AnnotateOptions::default();
+            match (
+                rt.block_on(client.annotate::<GeneBeResponse>(batch, genome, options)),
+                delays.next(),
+            ) {
+                (Ok(batch), _) => break responses.extend(batch),
+                (
+                    Err(e @ (GeneBearError::ApiServerError { .. } | GeneBearError::Http(_))),
+                    Some(delay),
+                ) => {
+                    warn!("GeneBe failed, retrying in {delay} s: {e}");
+                    thread::sleep(Duration::from_secs(delay));
+                }
+                (Err(e), _) => return Err(e.into()),
+            }
+        }
+    }
     Ok(variants
         .iter()
-        .zip(results)
-        .filter(|(node, result)| {
-            if let Some(message) = &result.warning {
-                warn!(
-                    "Ignoring GeneBe annotation for {} on {}: {}",
-                    node.hgvsg_token(),
-                    target,
-                    message
-                );
+        .zip(responses)
+        .map(|(variant, response)| match response.warning {
+            Some(warning) => {
+                warn!("Ignoring GeneBe annotation for {variant:?}: {warning}");
+                None
             }
-            result.warning.is_none()
+            None => Some(response.scores),
         })
-        .map(|(node, result)| (node.hgvsg_token(), result))
         .collect())
 }
 
-fn gnomad_af(variant: &AnnotatedVariant) -> Option<f64> {
+fn gnomad_af(variant: &VariantAnnotation) -> Option<f64> {
     max_score([variant.gnomad_exomes_af, variant.gnomad_genomes_af].into_iter())
 }
 
@@ -185,33 +299,73 @@ mod tests {
         )
     }
 
-    fn annotated(revel_score: f64) -> AnnotatedVariant {
-        AnnotatedVariant {
+    fn annotated(revel_score: f64) -> VariantAnnotation {
+        VariantAnnotation {
             revel_score: Some(revel_score),
             ..Default::default()
         }
     }
 
     #[test]
-    fn fetch_annotations_returns_scores() {
-        let client = Arc::new(Mutex::new(GeneBears::new(ClientConfig::default()).unwrap()));
-        let node = variant(11_796_320, "G", "T");
+    fn fetch_skips_variants_with_wrong_reference() {
+        let client = GeneBears::new(ClientConfig::default()).unwrap();
+        let variants = [
+            Variant::new("1", 11_796_321, "G", "T"),
+            Variant::new("1", 11_796_321, "A", "T"),
+        ];
 
-        let annotations = fetch_annotations(&[&node], "1", Genome::Hg38, &client).unwrap();
+        let annotations = fetch(&variants, Genome::Hg38, &client).unwrap();
 
-        let annotation = &annotations["11796321G>T"];
-        assert!(annotation.alphamissense_score.is_some());
-        assert!(annotation.revel_score.is_some());
+        let annotation = annotations[0].as_ref().unwrap();
+        assert!(annotation.revel_score.is_some() && annotation.alphamissense_score.is_some());
+        assert!(annotations[1].is_none());
     }
 
     #[test]
-    fn fetch_annotations_ignores_variants_with_mismatching_reference() {
-        let client = Arc::new(Mutex::new(GeneBears::new(ClientConfig::default()).unwrap()));
-        let node = variant(11_796_320, "A", "T");
+    fn lookup_takes_the_highest_row_per_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = duckdb::Connection::open_in_memory().unwrap();
+        for (id, column, _) in HUB_DATABASES {
+            let id: genebears::DatabaseId = id.parse().unwrap();
+            let version = id.version.unwrap();
+            let path = dir.path().join(&id.owner).join(&id.name).join(&version);
+            let rows = "VALUES ('1', 99, 1, 'T', 0.25), ('1', 99, 1, 'T', 0.5)";
+            std::fs::create_dir_all(&path).unwrap();
+            db.execute_batch(&format!(
+                "COPY (SELECT * FROM ({rows}) t(_seq, _pos, _del, _ins, \"{column}\")) \
+                 TO '{}' (FORMAT PARQUET, PARTITION_BY (_seq))",
+                path.join("parquet").display()
+            ))
+            .unwrap();
+            let description = format!("columns = [{{ name = \"{column}\" }}]");
+            std::fs::write(path.join("description.toml"), description).unwrap();
+        }
+        let variants = [
+            Variant::new("chr1", 100, "A", "T"),
+            Variant::new("1", 100, "A", "G"),
+        ];
 
-        let annotations = fetch_annotations(&[&node], "1", Genome::Hg38, &client).unwrap();
+        let annotations = lookup(&variants, &Store::new(dir.path())).unwrap();
 
-        assert!(annotations.is_empty());
+        let found = annotations[0].as_ref().unwrap();
+        assert_eq!(found.revel_score, Some(0.5));
+        assert_eq!(found.gnomad_genomes_af, Some(0.5));
+        assert_eq!(annotations[1].as_ref().unwrap().revel_score, None);
+    }
+
+    #[test]
+    fn coding_variants_of_overlapping_transcripts() {
+        let transcript = |coding| Transcript::new("t".into(), "1".into(), Strand::Forward, coding);
+        let first = transcript(vec![Cds::new(10, 20, 0), Cds::new(40, 50, 0)]);
+        let second = transcript(vec![Cds::new(15, 30, 0)]);
+        let variants = [5, 10, 18, 30, 35, 50, 51].map(|pos| variant(pos, "A", "T"));
+
+        let coding = coding_variants(variants.to_vec(), &[&first, &second]);
+
+        assert_eq!(
+            coding.iter().map(|node| node.pos).collect_vec(),
+            [10, 18, 30, 50]
+        );
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use crate::annotation::{fetch_annotations, Annotation};
+use crate::annotation::{Annotation, VariantAnnotation};
 use crate::cli::Interval;
 use crate::graph::combinations::{extreme_combinations, Combination, Scoring, State, STOPPED};
 use crate::graph::duck::{feature_graph, variants_on_graph};
@@ -16,13 +16,11 @@ use bio::alphabets::dna;
 use bio::bio_types::strand::Strand;
 use bio::io::gff::{self};
 use bio::stats::LogProb;
-use genebears::{AnnotatedVariant, GeneBears, Genome};
 use itertools::Itertools;
 use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub(crate) struct Transcript {
@@ -140,7 +138,7 @@ impl Transcript {
     }
 
     /// Haplotypes per phase block, restricted to the CDS, in transcript order.
-    fn block_haplotypes(
+    pub(crate) fn block_haplotypes(
         &self,
         graph: &PathBuf,
         max_haplotypes: usize,
@@ -299,44 +297,14 @@ impl Transcript {
         merged
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn scores(
-        &self,
-        graph: &PathBuf,
-        reference: &HashMap<String, Vec<u8>>,
-        haplotype_metric: HaplotypeMetric,
-        max_haplotypes: usize,
-        distance_metric: DistanceMetric,
-        genome_build: Genome,
-        genebe_client: &Arc<Mutex<GeneBears>>,
-    ) -> Result<Vec<HaplotypeScore>> {
-        let (blocks, samples) = self.block_haplotypes(graph, max_haplotypes)?;
-        let variants = blocks
-            .iter()
-            .flatten()
-            .flat_map(|(nodes, _)| nodes)
-            .filter(|node| node.node_type.is_variant())
-            .unique_by(|node| node.hgvsg_token())
-            .collect_vec();
-        let annotations = fetch_annotations(&variants, &self.target, genome_build, genebe_client)?;
-        self.score_haplotypes(
-            &blocks,
-            &samples,
-            reference,
-            haplotype_metric,
-            distance_metric,
-            &annotations,
-        )
-    }
-
-    fn score_haplotypes(
+    pub(crate) fn score_haplotypes(
         &self,
         blocks: &[Haplotypes],
         samples: &HashSet<String>,
         reference: &HashMap<String, Vec<u8>>,
         haplotype_metric: HaplotypeMetric,
         distance_metric: DistanceMetric,
-        annotations: &HashMap<String, AnnotatedVariant>,
+        annotations: &HashMap<String, VariantAnnotation>,
     ) -> Result<Vec<HaplotypeScore>> {
         let mut scorer = Scorer {
             transcript: self,
@@ -502,7 +470,7 @@ struct Scorer<'a> {
     blocks: &'a [Haplotypes],
     reference: &'a HashMap<String, Vec<u8>>,
     distance_metric: DistanceMetric,
-    annotations: &'a HashMap<String, AnnotatedVariant>,
+    annotations: &'a HashMap<String, VariantAnnotation>,
     original_protein: Protein,
     /// Stop codons by combination.
     stops: HashMap<Combination, Option<usize>>,
@@ -550,7 +518,6 @@ enum Impact {
     Revel,
     AlphaMissense,
     SpliceAi,
-    Acmg,
 }
 
 impl Scoring for Scorer<'_> {
@@ -560,7 +527,6 @@ impl Scoring for Scorer<'_> {
         Impact::Revel,
         Impact::AlphaMissense,
         Impact::SpliceAi,
-        Impact::Acmg,
     ];
 
     // Stopped if a stop codon lies before the next block, otherwise the frame offset.
@@ -588,7 +554,6 @@ impl Scoring for Scorer<'_> {
             Impact::Revel => self.annotation(combination)?.revel_score,
             Impact::AlphaMissense => self.annotation(combination)?.alphamissense_score,
             Impact::SpliceAi => self.annotation(combination)?.spliceai_score,
-            Impact::Acmg => self.annotation(combination)?.acmg_score,
         })
     }
 
@@ -1121,7 +1086,7 @@ chr1\tsource\tCDS\t400\t500\t.\t-\t0\tID=ENSP00000493377
         transcript: &Transcript,
         graph: VariantGraph,
         reference: &HashMap<String, Vec<u8>>,
-        annotations: &HashMap<String, AnnotatedVariant>,
+        annotations: &HashMap<String, VariantAnnotation>,
     ) -> (Vec<Haplotypes>, Vec<HaplotypeScore>) {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("graph.duckdb");
@@ -1211,7 +1176,7 @@ chr1\tsource\tCDS\t400\t500\t.\t-\t0\tID=ENSP00000493377
         let reference = HashMap::from([("test".to_string(), dna::revcomp(CODING))]);
         // The deletion comes first in the transcript.
         let variants = [(10, "G", "A"), (20, "CT", "C")];
-        let revel = |score| AnnotatedVariant {
+        let revel = |score| VariantAnnotation {
             revel_score: Some(score),
             ..Default::default()
         };

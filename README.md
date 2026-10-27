@@ -20,6 +20,7 @@
 - [Commands](#commands)
     - [Build](#build)
     - [Process](#process)
+    - [Cache](#cache)
     - [Peptides](#peptides)
     - [Plot](#plot)
 - [Example](#example)
@@ -73,7 +74,7 @@ haplodon build --calls path/to/calls.vcf --observations sample1=path/to/observat
 
 ### Process
 
-Retrieves subgraphs for individual features from the provided GFF file and scores the haplotypes of each transcript. Variants linked by reads form phase blocks, within which the read-supported haplotypes are kept. Between phase blocks the phase is unknown, so for every block haplotype only the most and the least severe combination with the other blocks is reported, for each impact (sequence score, REVEL, AlphaMissense, SpliceAI and ACMG).
+Retrieves subgraphs for individual features from the provided GFF file and scores the haplotypes of each transcript. Variants linked by reads form phase blocks, within which the read-supported haplotypes are kept. Between phase blocks the phase is unknown, so for every block haplotype only the most and the least severe combination with the other blocks is reported, for each impact (sequence score, REVEL, AlphaMissense and SpliceAI). For hg38, variant scores are read from the GeneBe Hub databases if they were downloaded with `haplodon cache`, otherwise they come from the GeneBe API.
 
 **Options:**
 
@@ -83,11 +84,20 @@ Retrieves subgraphs for individual features from the provided GFF file and score
 - `--haplotype-metric <string>`: Metric to use for haplotype quantification. Valid values: `product`, `geometric-mean`, `minimum`. Defaults to `minimum`.
 - `--max-haplotypes-per-block <int>`: Maximum number of read-supported haplotypes kept per phase block. Defaults to 50.
 - `--output <path>`: Path to the output file storing the calculated scores.
+- `--genebe-store <path>`: Directory of the GeneBe Hub databases, also read from `GENEBE_STORE`. Defaults to `~/.local/share/genebe/annotations` on Linux.
 
 **Example:**
 
 ```bash
 haplodon process --features path/to/features.gff --reference path/to/reference.fasta --graph path/to/graph.duckdb --output path/to/output/scores.duckdb
+```
+
+### Cache
+
+Downloads the GeneBe Hub databases (REVEL, AlphaMissense, SpliceAI and gnomAD, about 46 GB) that `process` reads hg38 scores from. This requires a GeneBe account, whose email and API key are read from `GENEBE_EMAIL` and `GENEBE_API_KEY`.
+
+```bash
+haplodon cache --genebe-store path/to/genebe
 ```
 
 ### Peptides

@@ -82,22 +82,44 @@ pub(crate) enum Command {
         )]
         max_haplotypes_per_block: usize,
 
-        /// Optional path to a cache file for GeneBe annotations. If not provided, annotations will be fetched from the GeneBe API and cached in memory during runtime.
-        /// Providing a cache file allows reusing annotations across multiple runs and can speed up processing as well as reduce load on the GeneBe API which comes with limits.
+        /// Optional cache file for GeneBe API responses, to reuse them across runs and stay within the API limits. Not used with the GeneBe Hub databases.
         #[clap(long)]
         genebe_cache: Option<PathBuf>,
 
         /// GeneBe account email for authenticated requests. Must be given together with `--genebe-api-key` and raises the anonymous request limit.
-        #[clap(long, requires = "genebe_api_key")]
+        #[clap(long, env = "GENEBE_EMAIL", requires = "genebe_api_key")]
         genebe_email: Option<String>,
 
         /// GeneBe API key for authenticated requests. Must be given together with `--genebe-email`.
-        #[clap(long, requires = "genebe_email")]
+        #[clap(
+            long,
+            env = "GENEBE_API_KEY",
+            hide_env_values = true,
+            requires = "genebe_email"
+        )]
         genebe_api_key: Option<String>,
 
         /// Genome build to use for fetching GeneBe annotations. Must be one of `hg38`, `hg19` or `t2t`.
         #[clap(long, default_value = "hg38")]
         genome_build: genebears::Genome,
+
+        /// Directory of GeneBe Hub databases as downloaded by `haplodon cache`. hg38 scores are read from there if the databases are installed, and from the GeneBe API if none are.
+        #[clap(long, env = "GENEBE_STORE", default_value_os_t = genebears::Store::default_root().unwrap_or_default())]
+        genebe_store: PathBuf,
+    },
+    /// Download the GeneBe Hub databases that hg38 scores are read from
+    Cache {
+        /// GeneBe account email
+        #[clap(long, env = "GENEBE_EMAIL")]
+        genebe_email: String,
+
+        /// GeneBe API key
+        #[clap(long, env = "GENEBE_API_KEY", hide_env_values = true)]
+        genebe_api_key: String,
+
+        /// Directory to store the databases in
+        #[clap(long, env = "GENEBE_STORE", default_value_os_t = genebears::Store::default_root().unwrap_or_default())]
+        genebe_store: PathBuf,
     },
     /// Output all distinct peptides from the given features to a fastq file per given CDS in the feature file
     Peptides {

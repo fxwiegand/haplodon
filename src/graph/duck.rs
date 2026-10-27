@@ -164,6 +164,25 @@ pub(crate) fn variants_on_graph(path: &PathBuf) -> Result<HashMap<String, BTreeS
     Ok(variant_map)
 }
 
+/// The distinct variants of a target in a serialised graph file, sorted by position.
+pub(crate) fn variant_nodes(path: &Path, target: &str) -> Result<Vec<Node>> {
+    let db = Connection::open(path)?;
+    let mut stmt = db.prepare(
+        "SELECT DISTINCT pos, reference_allele, alternative_allele FROM nodes \
+         WHERE target = ? AND node_type = ? ORDER BY ALL",
+    )?;
+    Ok(stmt
+        .query_map(params![target, NodeType::Variant.to_string()], |row| {
+            Ok(Node::new(
+                NodeType::Variant,
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+            ))
+        })?
+        .collect::<Result<_, _>>()?)
+}
+
 pub(crate) fn create_scores(output_path: &Path) -> Result<()> {
     let db = Connection::open(output_path)?;
     db.execute(
@@ -608,7 +627,6 @@ mod tests {
         let supporting_reads = vec![HashMap::from([("A".to_string(), 10), ("C".to_string(), 5)])];
         let annotion = Annotation {
             revel_score: Some(0.8),
-            acmg_score: Some(0.9),
             spliceai_score: Some(0.7),
             alphamissense_score: Some(0.6),
             gnomad_frequencies: HashMap::new(),
