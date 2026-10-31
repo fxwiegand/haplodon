@@ -234,6 +234,25 @@ impl VariantGraph {
             target: target.to_string(),
         };
 
+        // The reference allele frequency is what the alternative alleles at its position leave.
+        let mut alt_vafs: HashMap<(i64, String), f32> = HashMap::new();
+        for node in variant_graph.graph.node_weights() {
+            if node.node_type.is_variant() {
+                for (sample, vaf) in &node.vaf {
+                    *alt_vafs.entry((node.pos, sample.clone())).or_default() += vaf;
+                }
+            }
+        }
+        for node in variant_graph.graph.node_weights_mut() {
+            if !node.node_type.is_variant() {
+                for (sample, vaf) in node.vaf.iter_mut() {
+                    *vaf = alt_vafs
+                        .get(&(node.pos, sample.clone()))
+                        .map_or(1.0, |alt| (1.0 - alt).max(0.0));
+                }
+            }
+        }
+
         // For each (sample, fragment_id), if this fragment supports
         // any variant node at position P, remove its ref node entries at position P.
         // This fixes false ref support from normalized multi-allelic sites where a
@@ -701,9 +720,17 @@ mod tests {
             &observations,
             "OX512233.1",
             LogProb::from(Prob(0.0)),
-            0.05,
+            0.0,
         );
-        assert!(variant_graph.is_ok());
+        let graph = variant_graph.unwrap().graph;
+        for node in graph.node_weights().filter(|n| !n.node_type.is_variant()) {
+            let alt: f32 = graph
+                .node_weights()
+                .filter(|n| n.node_type.is_variant() && n.pos == node.pos)
+                .map(|n| n.vaf["sample"])
+                .sum();
+            assert!((node.vaf["sample"] + alt - 1.0).abs() < 1e-6);
+        }
     }
 
     #[test]
