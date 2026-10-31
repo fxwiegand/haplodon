@@ -83,6 +83,7 @@ impl VariantGraph {
             .collect();
 
         let mut supporting_reads = HashMap::new();
+        let mut alt_vafs: HashMap<(i64, String), f32> = HashMap::new();
 
         let mut variant_graph = Graph::<Node, Edge, Directed>::new();
         let mut index = 0;
@@ -169,6 +170,10 @@ impl VariantGraph {
                 &samples,
                 index,
             );
+            // Alleles below min_vaf still take their share from the reference allele.
+            for (sample, vaf) in &var_node.vaf {
+                *alt_vafs.entry((position, sample.clone())).or_default() += vaf;
+            }
             if var_node.max_vaf() < min_vaf {
                 continue;
             }
@@ -235,20 +240,12 @@ impl VariantGraph {
         };
 
         // The reference allele frequency is what the alternative alleles at its position leave.
-        let mut alt_vafs: HashMap<(i64, String), f32> = HashMap::new();
-        for node in variant_graph.graph.node_weights() {
-            if node.node_type.is_variant() {
-                for (sample, vaf) in &node.vaf {
-                    *alt_vafs.entry((node.pos, sample.clone())).or_default() += vaf;
-                }
-            }
-        }
         for node in variant_graph.graph.node_weights_mut() {
             if !node.node_type.is_variant() {
                 for (sample, vaf) in node.vaf.iter_mut() {
                     *vaf = alt_vafs
                         .get(&(node.pos, sample.clone()))
-                        .map_or(1.0, |alt| (1.0 - alt).max(0.0));
+                        .map_or(1.0, |alt| (1.0 - alt).clamp(0.0, 1.0));
                 }
             }
         }
