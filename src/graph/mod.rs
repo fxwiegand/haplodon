@@ -83,6 +83,7 @@ impl VariantGraph {
             .collect();
 
         let mut supporting_reads = HashMap::new();
+        let mut alt_vafs: HashMap<(i64, String), f32> = HashMap::new();
 
         let mut variant_graph = Graph::<Node, Edge, Directed>::new();
         let mut index = 0;
@@ -169,6 +170,10 @@ impl VariantGraph {
                 &samples,
                 index,
             );
+            // Alleles below min_vaf still take their share from the reference allele.
+            for (sample, vaf) in &var_node.vaf {
+                *alt_vafs.entry((position, sample.clone())).or_default() += vaf;
+            }
             if var_node.max_vaf() < min_vaf {
                 continue;
             }
@@ -233,6 +238,17 @@ impl VariantGraph {
             end: last_position,
             target: target.to_string(),
         };
+
+        // The reference allele frequency is what the alternative alleles at its position leave.
+        for node in variant_graph.graph.node_weights_mut() {
+            if !node.node_type.is_variant() {
+                for (sample, vaf) in node.vaf.iter_mut() {
+                    *vaf = alt_vafs
+                        .get(&(node.pos, sample.clone()))
+                        .map_or(1.0, |alt| (1.0 - alt).clamp(0.0, 1.0));
+                }
+            }
+        }
 
         // For each (sample, fragment_id), if this fragment supports
         // any variant node at position P, remove its ref node entries at position P.
@@ -701,9 +717,17 @@ mod tests {
             &observations,
             "OX512233.1",
             LogProb::from(Prob(0.0)),
-            0.05,
+            0.0,
         );
-        assert!(variant_graph.is_ok());
+        let graph = variant_graph.unwrap().graph;
+        for node in graph.node_weights().filter(|n| !n.node_type.is_variant()) {
+            let alt: f32 = graph
+                .node_weights()
+                .filter(|n| n.node_type.is_variant() && n.pos == node.pos)
+                .map(|n| n.vaf["sample"])
+                .sum();
+            assert!((node.vaf["sample"] + alt - 1.0).abs() < 1e-6);
+        }
     }
 
     #[test]
