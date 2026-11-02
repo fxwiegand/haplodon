@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.1](https://github.com/fxwiegand/haplodon/compare/v0.20.0...v0.20.1) (2026-11-02)
+
+
+### Bug Fixes
+
+* Count reference alleles in haplotype frequencies ([#335](https://github.com/fxwiegand/haplodon/issues/335)) ([93f66df](https://github.com/fxwiegand/haplodon/commit/93f66df660bec99233050a99cf85beddcd300c8a))
+
 ## [0.20.0](https://github.com/fxwiegand/haplodon/compare/v0.19.1...v0.20.0) (2026-10-27)
 
 
