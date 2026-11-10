@@ -1,5 +1,5 @@
 use crate::annotation::{annotate_coding_variants, Scores, HUB_DATABASES};
-use crate::cli::{Command, GeneBeCredentials, Haplodon};
+use crate::cli::{Command, Haplodon};
 use crate::graph::duck::{create_scores, read_scores, write_graphs, write_scores};
 use crate::graph::peptide::write_peptides;
 use crate::graph::transcript::transcripts;
@@ -11,7 +11,7 @@ use anyhow::{bail, Result};
 use bio::stats::{LogProb, Prob};
 use clap::Parser;
 use env_logger::Env;
-use genebears::{ClientConfig, Genome, Hub, Store};
+use genebears::{Genome, Hub, Store};
 use log::{info, warn};
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
@@ -82,11 +82,8 @@ impl Command {
                 haplotype_metric,
                 output,
                 max_haplotypes_per_block,
-                genebe_cache,
-                genebe_email,
-                genebe_api_key,
                 genome_build,
-                genebe_store,
+                genebe,
             } => {
                 info!("Reading reference genome from {reference:?}");
                 let reference_genome = utils::fasta::read_reference(reference);
@@ -103,22 +100,7 @@ impl Command {
                     bail!("The reference looks like {build}, set --genome-build {build}");
                 }
                 let write_lock = Arc::new(Mutex::new(()));
-                let credentials = match (genebe_email, genebe_api_key) {
-                    (Some(email), Some(api_key)) => Some(GeneBeCredentials {
-                        email: email.clone(),
-                        api_key: api_key.clone(),
-                    }),
-                    _ => None,
-                };
-                let mut config = ClientConfig::default();
-                if let Some(cache) = genebe_cache {
-                    config = config.with_cache(cache);
-                }
-                if let Some(credentials) = &credentials {
-                    config.email = Some(credentials.email.clone());
-                    config.api_key = Some(credentials.api_key.clone());
-                }
-                let scores = Scores::new(*genome_build, Store::new(genebe_store), config)?;
+                let scores = Scores::new(*genome_build, genebe)?;
                 let transcripts = transcripts(features, graph)?;
                 let annotations = annotate_coding_variants(graph, &transcripts, &scores)?;
                 create_scores(output, &scores.sources())?;

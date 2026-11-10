@@ -9,6 +9,7 @@ use std::path::Path;
 use std::thread;
 use std::time::Duration;
 
+use crate::cli::GeneBe;
 use crate::graph::duck::variant_nodes;
 use crate::graph::node::Node;
 use crate::graph::transcript::Transcript;
@@ -122,7 +123,8 @@ pub(crate) enum Scores {
 
 impl Scores {
     /// The GeneBe Hub databases in the store for hg38 if they are installed, otherwise the API.
-    pub(crate) fn new(genome: Genome, store: Store, config: ClientConfig) -> Result<Self> {
+    pub(crate) fn new(genome: Genome, genebe: &GeneBe) -> Result<Self> {
+        let store = Store::new(&genebe.genebe_store);
         let installed = HUB_DATABASES
             .iter()
             .filter(|(id, _, _)| id.parse().is_ok_and(|id| store.get(&id).is_ok()))
@@ -133,7 +135,15 @@ impl Scores {
                 "GeneBe Hub databases in {} are incomplete, rerun `haplodon cache`",
                 store.root().display()
             ),
-            _ => Ok(Scores::Api(Box::new(GeneBears::new(config)?), genome)),
+            _ => {
+                let client = GeneBears::new(ClientConfig {
+                    email: genebe.genebe_email.clone(),
+                    api_key: genebe.genebe_api_key.clone(),
+                    cache_path: genebe.genebe_cache.clone(),
+                    ..Default::default()
+                })?;
+                Ok(Scores::Api(Box::new(client), genome))
+            }
         }
     }
 
