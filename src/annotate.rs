@@ -295,7 +295,7 @@ fn format_entry(haplotype: &Haplotype, allele: &str) -> String {
         format_optional(annotation.revel_score),
         format_optional(annotation.alphamissense_score),
         format_optional(annotation.spliceai_score),
-        format_optional(annotation.cadd_phred),
+        format_optional(annotation.cadd_score),
     ]
     .join("|")
 }
@@ -499,7 +499,7 @@ mod tests {
             revel_score: Some(0.31),
             spliceai_score: None,
             alphamissense_score: None,
-            cadd_phred: None,
+            cadd_score: None,
             gnomad_frequencies: HashMap::from([("7675089C>T".to_string(), Some(0.0123))]),
         };
         write_scores(
@@ -608,7 +608,7 @@ mod tests {
                 revel_score: None,
                 spliceai_score: None,
                 alphamissense_score: None,
-                cadd_phred: None,
+                cadd_score: None,
                 gnomad_frequencies: HashMap::new(),
             };
             let transcript = Transcript::new(

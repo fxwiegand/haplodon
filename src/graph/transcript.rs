@@ -556,7 +556,7 @@ impl Scoring for Scorer<'_> {
             Impact::Revel => self.annotation(combination)?.revel_score,
             Impact::AlphaMissense => self.annotation(combination)?.alphamissense_score,
             Impact::SpliceAi => self.annotation(combination)?.spliceai_score,
-            Impact::Cadd => self.annotation(combination)?.cadd_phred,
+            Impact::Cadd => self.annotation(combination)?.cadd_score,
         })
     }
 

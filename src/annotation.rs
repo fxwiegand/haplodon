@@ -30,7 +30,7 @@ pub(crate) const HUB_DATABASES: [(&str, &str, Field); 6] = [
         &mut a.gnomad_genomes_af
     }),
     ("@genebe/cadd_hg38:0.0.2-1.7.0", "phred", |a| {
-        &mut a.cadd_phred
+        &mut a.cadd_score
     }),
 ];
 
@@ -45,7 +45,7 @@ pub(crate) struct VariantAnnotation {
     pub(crate) gnomad_exomes_af: Option<f64>,
     pub(crate) gnomad_genomes_af: Option<f64>,
     /// Only in the GeneBe Hub, not in the API.
-    pub(crate) cadd_phred: Option<f64>,
+    pub(crate) cadd_score: Option<f64>,
 }
 
 /// A GeneBe API response, with a warning if the variant could not be annotated.
@@ -61,7 +61,7 @@ pub(crate) struct Annotation {
     pub(crate) revel_score: Option<f64>,
     pub(crate) spliceai_score: Option<f64>,
     pub(crate) alphamissense_score: Option<f64>,
-    pub(crate) cadd_phred: Option<f64>,
+    pub(crate) cadd_score: Option<f64>,
     #[serde(default)]
     pub(crate) gnomad_frequencies: HashMap<String, Option<f64>>,
 }
@@ -105,7 +105,7 @@ impl Annotation {
             revel_score: probabilistic_or(translated.iter().map(|a| a.revel_score)),
             spliceai_score: probabilistic_or(all.iter().map(|(_, a)| a.spliceai_max_score)),
             alphamissense_score: probabilistic_or(translated.iter().map(|a| a.alphamissense_score)),
-            cadd_phred: max_score(all.iter().map(|(_, a)| a.cadd_phred)),
+            cadd_score: max_score(all.iter().map(|(_, a)| a.cadd_score)),
             gnomad_frequencies: all
                 .iter()
                 .map(|(token, annotation)| (token.clone(), gnomad_af(annotation)))
@@ -327,7 +327,7 @@ mod tests {
     fn annotated(score: f64) -> VariantAnnotation {
         VariantAnnotation {
             revel_score: Some(score),
-            cadd_phred: Some(score),
+            cadd_score: Some(score),
             ..Default::default()
         }
     }
@@ -454,7 +454,7 @@ mod tests {
 
         assert_eq!(stopped.revel_score, Some(0.5));
         // CADD also counts the variant after the stop.
-        assert_eq!(stopped.cadd_phred, Some(0.8));
+        assert_eq!(stopped.cadd_score, Some(0.8));
         assert_eq!(stopped.gnomad_frequencies.len(), 2);
     }
 }
