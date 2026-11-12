@@ -154,6 +154,14 @@ impl Scores {
             Scores::Api(_, genome) => format!("GeneBe API ({})", genome.as_str()),
         }
     }
+
+    /// Scores of the variants, `None` for the ones GeneBe could not annotate.
+    pub(crate) fn annotate(&self, variants: &[Variant]) -> Result<Vec<Option<VariantAnnotation>>> {
+        match self {
+            Scores::Hub(store) => lookup(variants, store),
+            Scores::Api(client, genome) => fetch(variants, *genome, client),
+        }
+    }
 }
 
 /// Annotates the coding variants of the transcripts once per target, by HGVS token.
@@ -180,11 +188,9 @@ pub(crate) fn annotate_coding_variants(
                 })
                 .collect_vec();
             info!("Annotating {} coding variants on {target}", variants.len());
-            let annotations = match scores {
-                Scores::Hub(store) => lookup(&variants, store)?,
-                Scores::Api(client, genome) => fetch(&variants, *genome, client)
-                    .with_context(|| format!("GeneBe failed to annotate variants on {target}"))?,
-            };
+            let annotations = scores
+                .annotate(&variants)
+                .with_context(|| format!("GeneBe failed to annotate variants on {target}"))?;
             let annotations = nodes
                 .iter()
                 .zip(annotations)
@@ -269,7 +275,7 @@ fn fetch(
         .collect())
 }
 
-fn gnomad_af(variant: &VariantAnnotation) -> Option<f64> {
+pub(crate) fn gnomad_af(variant: &VariantAnnotation) -> Option<f64> {
     max_score([variant.gnomad_exomes_af, variant.gnomad_genomes_af].into_iter())
 }
 

@@ -20,7 +20,7 @@ use itertools::Itertools;
 use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub(crate) struct Transcript {
@@ -124,6 +124,18 @@ impl Transcript {
             pos,
             self.name()
         );
+    }
+
+    /// The last coding base of every exon that a splice donor follows, i.e. all but the last CDS
+    /// part in transcript order.
+    pub(crate) fn exon_edges(&self) -> Vec<u64> {
+        self.cds()
+            .tuple_windows()
+            .map(|(cds, _)| match self.strand {
+                Strand::Reverse => cds.start,
+                _ => cds.end,
+            })
+            .collect()
     }
 
     fn paths(&self, graph: &VariantGraph) -> Result<Vec<HaplotypePath>> {
@@ -679,11 +691,24 @@ impl RnaPath {
     }
 }
 
-pub(crate) fn transcripts(gff_file: &PathBuf, graph: &PathBuf) -> Result<Vec<Transcript>> {
+/// The transcripts of the GFF file with a variant of the graph in their CDS.
+pub(crate) fn transcripts(gff_file: &Path, graph: &PathBuf) -> Result<Vec<Transcript>> {
     let variants = variants_on_graph(graph)?;
+    Ok(read_transcripts(gff_file)?
+        .into_iter()
+        .filter(|transcript| {
+            transcript
+                .coding_sequences
+                .iter()
+                .any(|cds| cds.contains_variant(&transcript.target, &variants))
+        })
+        .collect())
+}
+
+/// All transcripts of the GFF file, with the CDS grouped by their ID.
+pub(crate) fn read_transcripts(gff_file: &Path) -> Result<Vec<Transcript>> {
     let mut feature_reader = gff::Reader::from_file(gff_file, gff::GffType::GFF3)?;
     let mut transcripts = HashMap::new();
-    let mut variant_coverage = HashMap::new();
     for record in feature_reader
         .records()
         .filter_map(Result::ok)
@@ -699,22 +724,14 @@ pub(crate) fn transcripts(gff_file: &PathBuf, graph: &PathBuf) -> Result<Vec<Tra
         let strand = record.strand().ok_or_else(|| {
             anyhow::anyhow!("No strand found for CDS in sequence {}", record.seqname())
         })?;
-        let cds = Cds::new(start, end, phase);
-        if !variant_coverage.get(ensp).copied().unwrap_or(false) {
-            let has_variant = cds.contains_variant(&target, &variants);
-            if has_variant {
-                variant_coverage.insert(ensp.to_string(), true);
-            }
-        }
         let transcript = transcripts.entry(ensp.to_string()).or_insert_with(|| {
             Transcript::new(ensp.to_string(), target.clone(), strand, Vec::new())
         });
-        transcript.coding_sequences.push(cds);
+        transcript
+            .coding_sequences
+            .push(Cds::new(start, end, phase));
     }
-    Ok(transcripts
-        .into_values()
-        .filter(|t| matches!(variant_coverage.get(&t.feature), Some(true)))
-        .collect())
+    Ok(transcripts.into_values().collect())
 }
 
 #[cfg(test)]
@@ -1228,5 +1245,20 @@ chr1\tsource\tCDS\t400\t500\t.\t-\t0\tID=ENSP00000493377
         .score();
 
         assert!((score - 2.0 / 18.0).abs() < 1e-9, "{score}");
+    }
+
+    #[test]
+    fn exon_edges_on_both_strands() {
+        let parts = vec![
+            Cds::new(10, 20, 0),
+            Cds::new(30, 40, 0),
+            Cds::new(50, 60, 0),
+        ];
+
+        assert_eq!(
+            transcript(Strand::Forward, parts.clone()).exon_edges(),
+            [20, 40]
+        );
+        assert_eq!(transcript(Strand::Reverse, parts).exon_edges(), [50, 30]);
     }
 }

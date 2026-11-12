@@ -1,4 +1,5 @@
 use crate::annotation::{annotate_coding_variants, Scores, HUB_DATABASES};
+use crate::calibration::calibrate;
 use crate::cli::{Command, Haplodon};
 use crate::graph::duck::{create_scores, read_scores, write_graphs, write_scores};
 use crate::graph::peptide::write_peptides;
@@ -19,6 +20,7 @@ use std::sync::{Arc, Mutex};
 
 mod annotate;
 mod annotation;
+mod calibration;
 mod cli;
 mod graph;
 mod show;
@@ -145,6 +147,16 @@ impl Command {
                         Ok(())
                     },
                 )?;
+            }
+            Command::Calibrate {
+                clinvar,
+                features,
+                scores,
+                calibration,
+                genebe,
+            } => {
+                let source = Scores::new(Genome::Hg38, genebe)?;
+                calibrate(clinvar, features, scores, &source, calibration)?;
             }
             Command::Cache {
                 genebe_email,

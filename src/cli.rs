@@ -4,6 +4,7 @@ use std::fmt::Display;
 use std::path::PathBuf;
 use std::str::FromStr;
 
+use crate::calibration::Score;
 use crate::graph::score::HaplotypeMetric;
 use crate::translation::distance::DistanceMetric;
 
@@ -85,6 +86,27 @@ pub(crate) enum Command {
         /// Genome build to use for fetching GeneBe annotations. Must be one of `hg38`, `hg19` or `t2t`.
         #[clap(long, default_value = "hg38")]
         genome_build: genebears::Genome,
+
+        #[clap(flatten)]
+        genebe: GeneBe,
+    },
+    /// Learn how the variant scores translate into probabilities of pathogenicity from ClinVar
+    Calibrate {
+        /// Path to a ClinVar VCF for GRCh38, e.g. clinvar.vcf.gz from the NCBI FTP.
+        #[clap(long)]
+        clinvar: PathBuf,
+
+        /// Path to the gff file whose CDS give the exon edges. Use MANE Select for the whole genome, since the prior of the edge group was estimated on it.
+        #[clap(short, long)]
+        features: PathBuf,
+
+        /// Score to calibrate, given once per score. Only the curves of these scores are replaced. CADD needs the GeneBe Hub databases.
+        #[clap(short, long, required = true)]
+        scores: Vec<Score>,
+
+        /// Path to the calibration table to update. If the file doesn't exist yet, it starts from the one built into haplodon.
+        #[clap(short, long)]
+        calibration: PathBuf,
 
         #[clap(flatten)]
         genebe: GeneBe,
