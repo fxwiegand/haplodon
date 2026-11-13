@@ -1,13 +1,14 @@
 use crate::annotation::{Annotation, VariantAnnotation};
+use crate::calibration::{Calibration, Group};
 use crate::cli::Interval;
 use crate::graph::combinations::{extreme_combinations, Combination, Scoring, State, STOPPED};
 use crate::graph::duck::{feature_graph, variants_on_graph};
 use crate::graph::node::{Node, NodeType};
 use crate::graph::paths::{Cds, HaplotypePath};
 use crate::graph::peptide::Peptide;
-use crate::graph::score::EffectScore;
-use crate::graph::score::HaplotypeMetric;
-use crate::graph::score::HaplotypeScore;
+use crate::graph::score::{
+    has_premature_stop, Consequence, EffectScore, HaplotypeMetric, HaplotypeScore,
+};
 use crate::graph::{EventProbs, VariantGraph};
 use crate::translation::amino_acids::{AminoAcid, Protein};
 use crate::translation::distance::DistanceMetric;
@@ -136,6 +137,58 @@ impl Transcript {
                 _ => cds.end,
             })
             .collect()
+    }
+
+    /// The scores of the variants of the blocks as probabilities. The consequence of a variant on
+    /// this transcript and whether it sits at an exon edge pick the curve.
+    pub(crate) fn probabilities(
+        &self,
+        blocks: &[Haplotypes],
+        reference: &HashMap<String, Vec<u8>>,
+        distance_metric: DistanceMetric,
+        annotations: &HashMap<String, VariantAnnotation>,
+        calibration: &Calibration,
+    ) -> Result<HashMap<String, VariantAnnotation>> {
+        let original_protein = Protein::from_transcript(reference, self)?;
+        // Incomplete CDS give wrong consequences, so their variants get no curve.
+        let complete = self.cds().map(Cds::length).sum::<usize>() % 3 == 0
+            && original_protein.sequence.first() == Some(&AminoAcid::Methionine)
+            && !has_premature_stop(&original_protein);
+        let edges = self.exon_edges();
+        let mut probabilities = HashMap::new();
+        let variants = blocks.iter().flatten().flat_map(|(nodes, _)| nodes);
+        // Reference nodes have the same token as their variant.
+        for node in variants.filter(|node| node.node_type.is_variant()) {
+            let token = node.hgvsg_token();
+            let Some(annotation) = annotations.get(&token) else {
+                continue;
+            };
+            if probabilities.contains_key(&token) {
+                continue;
+            }
+            let effect = EffectScore::from_haplotype(
+                reference,
+                self,
+                std::slice::from_ref(node),
+                original_protein.clone(),
+                distance_metric,
+            )?;
+            let edge = edges.contains(&(node.pos as u64));
+            let stop_codon = self
+                .position_in_transcript(node.pos as usize)
+                .ok()
+                .and_then(|position| original_protein.sequence.get(position / 3))
+                .is_some_and(AminoAcid::is_stop);
+            let group = match effect.consequence {
+                Consequence::Missense => Some(Group::Missense),
+                // A retained stop is synonymous too, but changes of the stop codon get no curve.
+                Consequence::Synonymous if !stop_codon => Some(Group::new(false, edge)),
+                _ => None,
+            };
+            let group = group.filter(|_| complete);
+            probabilities.insert(token, calibration.apply(annotation, group, edge));
+        }
+        Ok(probabilities)
     }
 
     fn paths(&self, graph: &VariantGraph) -> Result<Vec<HaplotypePath>> {
@@ -572,9 +625,9 @@ impl Scoring for Scorer<'_> {
         })
     }
 
-    // REVEL and AlphaMissense only score missense variants in the original frame.
+    // REVEL, AlphaMissense and CADD only score variants in the original frame.
     fn needs_frame(&self, impact: Impact) -> bool {
-        matches!(impact, Impact::Revel | Impact::AlphaMissense)
+        matches!(impact, Impact::Revel | Impact::AlphaMissense | Impact::Cadd)
     }
 }
 
@@ -737,6 +790,7 @@ pub(crate) fn read_transcripts(gff_file: &Path) -> Result<Vec<Transcript>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::calibration;
     use crate::graph::duck::write_graphs;
     use crate::graph::node::Node;
     use crate::graph::tests::phased_graph;
@@ -1260,5 +1314,74 @@ chr1\tsource\tCDS\t400\t500\t.\t-\t0\tID=ENSP00000493377
             [20, 40]
         );
         assert_eq!(transcript(Strand::Reverse, parts).exon_edges(), [50, 30]);
+    }
+
+    #[test]
+    fn probabilities_by_group() {
+        // The first CDS part ends with the third base of codon 4.
+        let transcript = transcript(
+            Strand::Forward,
+            vec![Cds::new(0, 14, 0), Cds::new(15, 29, 0)],
+        );
+        let reference = HashMap::from([("test".to_string(), CODING.to_vec())]);
+        let calibration = calibration::table(
+            "revel\tmissense\t1\tt\t0\t0\t1\t1\t0.3\n\
+             spliceai\tsynonymous_edge\t1\tt\t0\t0\t1\t1\t0.6\n\
+             spliceai\tsynonymous_other\t1\tt\t0\t0\t1\t1\t0.01\n",
+        );
+        // Synonymous at the edge and elsewhere, missense, a retained stop and a common missense.
+        let nodes = [
+            (14, "A", "G"),
+            (11, "A", "G"),
+            (13, "C", "T"),
+            (29, "A", "G"),
+            (10, "C", "T"),
+        ]
+        .map(|(pos, reference_allele, alternative_allele)| {
+            Node::new(
+                NodeType::Variant,
+                pos,
+                reference_allele.to_string(),
+                alternative_allele.to_string(),
+            )
+        });
+        let annotations: HashMap<_, _> = nodes
+            .iter()
+            .map(|node| {
+                let annotation = VariantAnnotation {
+                    revel_score: Some(0.5),
+                    spliceai_max_score: Some(0.5),
+                    gnomad_exomes_af: (node.pos == 10).then_some(0.05),
+                    ..Default::default()
+                };
+                (node.hgvsg_token(), annotation)
+            })
+            .collect();
+        // Like in real blocks, the reference haplotype comes first, with the same tokens.
+        let reference_node = Node::new(NodeType::Reference, 13, "C".into(), "T".into());
+        let blocks = [vec![
+            (vec![reference_node], vec![]),
+            (nodes.to_vec(), vec![]),
+        ]];
+
+        let probabilities = transcript
+            .probabilities(
+                &blocks,
+                &reference,
+                DistanceMetric::Grantham,
+                &annotations,
+                &calibration,
+            )
+            .unwrap();
+
+        let scores = |token: &str| {
+            let annotation = &probabilities[token];
+            (annotation.revel_score, annotation.spliceai_max_score)
+        };
+        assert_eq!(scores("15A>G"), (None, Some(0.6)));
+        assert_eq!(scores("12A>G"), (None, Some(0.01)));
+        assert_eq!(scores("14C>T"), (Some(0.3), Some(0.01)));
+        assert_eq!(scores("30A>G"), (None, None));
+        assert_eq!(scores("11C>T"), (None, None));
     }
 }

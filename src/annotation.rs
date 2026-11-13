@@ -44,7 +44,7 @@ pub(crate) struct VariantAnnotation {
     pub(crate) spliceai_max_score: Option<f64>,
     pub(crate) gnomad_exomes_af: Option<f64>,
     pub(crate) gnomad_genomes_af: Option<f64>,
-    /// Only in the GeneBe Hub, not in the API.
+    /// PHRED score, or its probability once calibrated. Only in the GeneBe Hub, not in the API.
     pub(crate) cadd_score: Option<f64>,
 }
 
@@ -67,8 +67,8 @@ pub(crate) struct Annotation {
 }
 
 impl Annotation {
-    /// Aggregates the annotations of the variants of a haplotype. Missense scores only count
-    /// variants in the original frame and before the stop codon at `stop`.
+    /// Combines the probabilities of the variants of a haplotype. REVEL, AlphaMissense and CADD
+    /// only count variants in the original frame and before the stop codon at `stop`.
     pub(crate) fn from_haplotype(
         haplotype: &[Node],
         transcript: &Transcript,
@@ -105,7 +105,7 @@ impl Annotation {
             revel_score: probabilistic_or(translated.iter().map(|a| a.revel_score)),
             spliceai_score: probabilistic_or(all.iter().map(|(_, a)| a.spliceai_max_score)),
             alphamissense_score: probabilistic_or(translated.iter().map(|a| a.alphamissense_score)),
-            cadd_score: max_score(all.iter().map(|(_, a)| a.cadd_score)),
+            cadd_score: probabilistic_or(translated.iter().map(|a| a.cadd_score)),
             gnomad_frequencies: all
                 .iter()
                 .map(|(token, annotation)| (token.clone(), gnomad_af(annotation)))
@@ -459,8 +459,7 @@ mod tests {
         let stopped = Annotation::from_haplotype(&haplotype, &transcript, &annotations, Some(3));
 
         assert_eq!(stopped.revel_score, Some(0.5));
-        // CADD also counts the variant after the stop.
-        assert_eq!(stopped.cadd_score, Some(0.8));
+        assert_eq!(stopped.cadd_score, Some(0.5));
         assert_eq!(stopped.gnomad_frequencies.len(), 2);
     }
 }

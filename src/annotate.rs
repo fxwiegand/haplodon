@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::Path;
 
-const HAPLODON_INFO: &[u8] = b"##INFO=<ID=HAPLODON,Number=.,Type=String,Description=\"haplodon haplotype-aware variant effect. One entry per transcript and haplotype; scores are haplotype-level and shared across a haplotype's records, joined via haplotype_id (per-sample frequencies in FORMAT/HF). Reserved characters are percent-encoded per VCF 4.3. Format: allele|consequence|feature|hgvsc|hgvsg|haplotype_id|sequence_impact|general_impact|structure_impact|splice_impact|deleteriousness_impact\">";
+const HAPLODON_INFO: &[u8] = b"##INFO=<ID=HAPLODON,Number=.,Type=String,Description=\"haplodon haplotype-aware variant effect. One entry per transcript and haplotype; scores are haplotype-level and shared across a haplotype's records, joined via haplotype_id (per-sample frequencies in FORMAT/HF). Reserved characters are percent-encoded per VCF 4.3. The last four impacts are probabilities of pathogenicity from REVEL, AlphaMissense, SpliceAI and CADD. Format: allele|consequence|feature|hgvsc|hgvsg|haplotype_id|sequence_impact|general_impact|structure_impact|splice_impact|deleteriousness_impact\">";
 
 const HAPLODON_MAX_INFO: &[u8] = b"##INFO=<ID=HAPLODON_MAX,Number=A,Type=Float,Description=\"Maximum haplodon haplotype score for this ALT across all transcripts and haplotypes (0 to 1).\">";
 

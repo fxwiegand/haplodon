@@ -170,6 +170,51 @@ impl Calibration {
         writer.flush()?;
         Ok(())
     }
+
+    /// The probability of the bin the value falls into. Values below the first bin take the first.
+    fn probability(&self, score: Score, group: Group, value: f64) -> Option<f64> {
+        let bins = self.0.get(&(score, group))?;
+        let above = bins.partition_point(|bin| bin.lower <= value);
+        bins.get(above.saturating_sub(1)).map(|bin| bin.probability)
+    }
+
+    /// The scores of a variant of the group as probabilities, without the ones that have no curve
+    /// for the group. Common variants get none.
+    pub(crate) fn apply(
+        &self,
+        annotation: &VariantAnnotation,
+        group: Option<Group>,
+        edge: bool,
+    ) -> VariantAnnotation {
+        let group = group.filter(|_| rare(annotation));
+        let probability = |score: Score| {
+            let group = group?;
+            // SpliceAI takes the synonymous curve of the same position for missense variants as
+            // well, since splicing doesn't depend on the amino acid.
+            let curve = match score {
+                Score::SpliceAi => Group::new(false, edge),
+                _ => group,
+            };
+            self.probability(score, curve, score.value(annotation)?)
+        };
+        VariantAnnotation {
+            revel_score: probability(Score::Revel),
+            alphamissense_score: probability(Score::AlphaMissense),
+            spliceai_max_score: probability(Score::SpliceAi),
+            cadd_score: probability(Score::Cadd),
+            ..annotation.clone()
+        }
+    }
+
+    /// The ClinVar releases the curves were learned on.
+    pub(crate) fn sources(&self) -> String {
+        self.0
+            .values()
+            .flatten()
+            .map(|bin| format!("ClinVar {}", bin.clinvar))
+            .unique()
+            .join(",")
+    }
 }
 
 /// Learns the curves of the scores on the ClinVar VCF and replaces their rows in the table.
@@ -379,6 +424,12 @@ fn pool(bins: Vec<Counts>, share: impl Fn(&Counts) -> f64) -> Vec<Counts> {
 }
 
 #[cfg(test)]
+pub(crate) fn table(rows: &str) -> Calibration {
+    let header = "score\tgroup\tclinvar\tsource\tprior\tlower\tpathogenic\tbenign\tprobability\n";
+    Calibration::parse(&format!("{header}{rows}")).unwrap()
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -418,5 +469,20 @@ mod tests {
         let lower = bins.iter().map(|(counts, _)| counts.lower).collect_vec();
         assert_eq!(lower, [0.0, 2.0]);
         assert!(bins[0].1 < bins[1].1);
+    }
+
+    #[test]
+    fn lookup() {
+        let calibration = table(
+            "revel\tmissense\t1\tt\t0\t0.2\t1\t9\t0.1\n\
+             revel\tmissense\t1\tt\t0\t0.5\t5\t5\t0.5\n",
+        );
+        // Below, at and above the bins.
+        for (value, probability) in [(0.1, 0.1), (0.5, 0.5), (0.9, 0.5)] {
+            assert_eq!(
+                calibration.probability(Score::Revel, Group::Missense, value),
+                Some(probability)
+            );
+        }
     }
 }

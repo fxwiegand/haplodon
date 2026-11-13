@@ -87,6 +87,10 @@ pub(crate) enum Command {
         #[clap(long, default_value = "hg38")]
         genome_build: genebears::Genome,
 
+        /// Path to a calibration table written by `haplodon calibrate`. Defaults to the one built into haplodon.
+        #[clap(short, long)]
+        calibration: Option<PathBuf>,
+
         #[clap(flatten)]
         genebe: GeneBe,
     },

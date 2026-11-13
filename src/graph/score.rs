@@ -72,7 +72,7 @@ impl Consequence {
 }
 
 /// True if the protein is truncated by a stop codon upstream of its last residue.
-fn has_premature_stop(protein: &Protein) -> bool {
+pub(crate) fn has_premature_stop(protein: &Protein) -> bool {
     protein
         .amino_acids()
         .iter()

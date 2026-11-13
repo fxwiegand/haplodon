@@ -1,5 +1,5 @@
 use crate::annotation::{annotate_coding_variants, Scores, HUB_DATABASES};
-use crate::calibration::calibrate;
+use crate::calibration::{calibrate, Calibration};
 use crate::cli::{Command, Haplodon};
 use crate::graph::duck::{create_scores, read_scores, write_graphs, write_scores};
 use crate::graph::peptide::write_peptides;
@@ -85,6 +85,7 @@ impl Command {
                 output,
                 max_haplotypes_per_block,
                 genome_build,
+                calibration,
                 genebe,
             } => {
                 info!("Reading reference genome from {reference:?}");
@@ -103,9 +104,11 @@ impl Command {
                 }
                 let write_lock = Arc::new(Mutex::new(()));
                 let scores = Scores::new(*genome_build, genebe)?;
+                let calibration = Calibration::load(calibration.as_deref())?;
                 let transcripts = transcripts(features, graph)?;
                 let annotations = annotate_coding_variants(graph, &transcripts, &scores)?;
-                create_scores(output, &scores.sources())?;
+                let sources = format!("{},{}", scores.sources(), calibration.sources());
+                create_scores(output, &sources)?;
                 let total = transcripts.len();
                 transcripts.into_par_iter().enumerate().try_for_each(
                     |(i, transcript)| -> anyhow::Result<()> {
@@ -129,13 +132,20 @@ impl Command {
                         }
                         let (blocks, samples) =
                             transcript.block_haplotypes(graph, *max_haplotypes_per_block)?;
+                        let probabilities = transcript.probabilities(
+                            &blocks,
+                            &reference_genome,
+                            *distance_metric,
+                            &annotations[&transcript.target],
+                            &calibration,
+                        )?;
                         let scores = transcript.score_haplotypes(
                             &blocks,
                             &samples,
                             &reference_genome,
                             *haplotype_metric,
                             *distance_metric,
-                            &annotations[&transcript.target],
+                            &probabilities,
                         )?;
                         info!(
                             "Writing scores for {} different haplotypes for transcript {}",

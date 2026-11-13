@@ -77,6 +77,8 @@ haplodon build --calls path/to/calls.vcf --observations sample1=path/to/observat
 
 Retrieves subgraphs for individual features from the provided GFF file and scores the haplotypes of each transcript. Variants linked by reads form phase blocks, within which the read-supported haplotypes are kept. Between phase blocks the phase is unknown, so for every block haplotype only the most and the least severe combination with the other blocks is reported, for each impact (sequence score, REVEL, AlphaMissense, SpliceAI and CADD). For hg38, variant scores are read from the GeneBe Hub databases if they were downloaded with `haplodon cache`, otherwise they come from the GeneBe API, which has no CADD scores. The Hub only has CADD scores for SNVs.
 
+The REVEL, AlphaMissense, SpliceAI and CADD columns are probabilities of pathogenicity, not the raw scores. Each variant score is turned into one with the curves of `haplodon calibrate`, picked by the consequence of the variant on the transcript. REVEL and AlphaMissense apply to missense variants, CADD to missense and synonymous ones, and SpliceAI to both, always with the synonymous curve for the last base of an exon or the one for elsewhere. A haplotype gets the probability that at least one of its variants is pathogenic (for SpliceAI through splicing), assuming the variants are independent. REVEL, AlphaMissense and CADD only count variants in the original frame before the first stop. Variants at 1% or more in gnomAD, other changes like stop gained or indels, changes of the start or stop codon and the variants of transcripts with an incomplete CDS get no probability, and a haplotype without any scored variant has no value.
+
 **Options:**
 
 - `--features <path>`: Path to the GFF file containing the features of interest.
@@ -86,6 +88,7 @@ Retrieves subgraphs for individual features from the provided GFF file and score
 - `--max-haplotypes-per-block <int>`: Maximum number of read-supported haplotypes kept per phase block. Defaults to 50.
 - `--output <path>`: Path to the output file storing the calculated scores.
 - `--genebe-store <path>`: Directory of the GeneBe Hub databases, also read from `GENEBE_STORE`. Defaults to `~/.local/share/genebe/annotations` on Linux.
+- `--calibration <path>`: Path to a calibration table written by `haplodon calibrate`. Defaults to the one built into haplodon.
 
 **Example:**
 
@@ -145,7 +148,7 @@ haplodon peptides --features path/to/features.gff --reference path/to/reference.
 
 ### Plot
 
-Outputs the calculated scores in one TSV file with columns "transcript", "score", and per-sample likelihood columns (one column per sample).
+Outputs the calculated scores in one TSV file with the columns `transcript`, `score`, `haplotype`, the probabilities `revel_score`, `spliceai_score`, `alphamissense_score` and `cadd_score`, and per sample a frequency and a supporting reads column.
 
 **Options:**
 
