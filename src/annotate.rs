@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::Path;
 
-const HAPLODON_INFO: &[u8] = b"##INFO=<ID=HAPLODON,Number=.,Type=String,Description=\"haplodon haplotype-aware variant effect. One entry per transcript and haplotype; scores are haplotype-level and shared across a haplotype's records, joined via haplotype_id (per-sample frequencies in FORMAT/HF). Reserved characters are percent-encoded per VCF 4.3. Format: allele|consequence|feature|hgvsc|hgvsg|haplotype_id|sequence_impact|general_impact|structure_impact|splice_impact|deleteriousness_impact\">";
+const HAPLODON_INFO: &[u8] = b"##INFO=<ID=HAPLODON,Number=.,Type=String,Description=\"haplodon haplotype-aware variant effect. One entry per transcript and haplotype; scores are haplotype-level and shared across a haplotype's records, joined via haplotype_id (per-sample frequencies in FORMAT/HF). Reserved characters are percent-encoded per VCF 4.3. The last four impacts are probabilities of pathogenicity from REVEL, AlphaMissense, SpliceAI and CADD. Format: allele|consequence|feature|hgvsc|hgvsg|haplotype_id|sequence_impact|general_impact|structure_impact|splice_impact|deleteriousness_impact\">";
 
 const HAPLODON_MAX_INFO: &[u8] = b"##INFO=<ID=HAPLODON_MAX,Number=A,Type=Float,Description=\"Maximum haplodon haplotype score for this ALT across all transcripts and haplotypes (0 to 1).\">";
 
@@ -295,7 +295,7 @@ fn format_entry(haplotype: &Haplotype, allele: &str) -> String {
         format_optional(annotation.revel_score),
         format_optional(annotation.alphamissense_score),
         format_optional(annotation.spliceai_score),
-        format_optional(annotation.cadd_phred),
+        format_optional(annotation.cadd_score),
     ]
     .join("|")
 }
@@ -499,7 +499,7 @@ mod tests {
             revel_score: Some(0.31),
             spliceai_score: None,
             alphamissense_score: None,
-            cadd_phred: None,
+            cadd_score: None,
             gnomad_frequencies: HashMap::from([("7675089C>T".to_string(), Some(0.0123))]),
         };
         write_scores(
@@ -608,7 +608,7 @@ mod tests {
                 revel_score: None,
                 spliceai_score: None,
                 alphamissense_score: None,
-                cadd_phred: None,
+                cadd_score: None,
                 gnomad_frequencies: HashMap::new(),
             };
             let transcript = Transcript::new(

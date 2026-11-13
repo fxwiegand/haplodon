@@ -20,6 +20,7 @@
 - [Commands](#commands)
     - [Build](#build)
     - [Process](#process)
+    - [Calibrate](#calibrate)
     - [Cache](#cache)
     - [Peptides](#peptides)
     - [Plot](#plot)
@@ -76,6 +77,8 @@ haplodon build --calls path/to/calls.vcf --observations sample1=path/to/observat
 
 Retrieves subgraphs for individual features from the provided GFF file and scores the haplotypes of each transcript. Variants linked by reads form phase blocks, within which the read-supported haplotypes are kept. Between phase blocks the phase is unknown, so for every block haplotype only the most and the least severe combination with the other blocks is reported, for each impact (sequence score, REVEL, AlphaMissense, SpliceAI and CADD). For hg38, variant scores are read from the GeneBe Hub databases if they were downloaded with `haplodon cache`, otherwise they come from the GeneBe API, which has no CADD scores. The Hub only has CADD scores for SNVs.
 
+The REVEL, AlphaMissense, SpliceAI and CADD columns are probabilities of pathogenicity, not the raw scores. Each variant score is turned into one with the curves of `haplodon calibrate`, picked by the consequence of the variant on the transcript. REVEL and AlphaMissense apply to missense variants, CADD to missense and synonymous ones, and SpliceAI to both, always with the synonymous curve for the last base of an exon or the one for elsewhere. A haplotype gets the probability that at least one of its variants is pathogenic (for SpliceAI through splicing), assuming the variants are independent. REVEL, AlphaMissense and CADD only count variants in the original frame before the first stop. Variants at 1% or more in gnomAD, other changes like stop gained or indels, changes of the start or stop codon and the variants of transcripts with an incomplete CDS get no probability, and a haplotype without any scored variant has no value.
+
 **Options:**
 
 - `--features <path>`: Path to the GFF file containing the features of interest.
@@ -85,6 +88,7 @@ Retrieves subgraphs for individual features from the provided GFF file and score
 - `--max-haplotypes-per-block <int>`: Maximum number of read-supported haplotypes kept per phase block. Defaults to 50.
 - `--output <path>`: Path to the output file storing the calculated scores.
 - `--genebe-store <path>`: Directory of the GeneBe Hub databases, also read from `GENEBE_STORE`. Defaults to `~/.local/share/genebe/annotations` on Linux.
+- `--calibration <path>`: Path to a calibration table written by `haplodon calibrate`. Defaults to the one built into haplodon.
 
 **Example:**
 
@@ -92,9 +96,28 @@ Retrieves subgraphs for individual features from the provided GFF file and score
 haplodon process --features path/to/features.gff --reference path/to/reference.fasta --graph path/to/graph.duckdb --output path/to/output/scores.duckdb
 ```
 
+### Calibrate
+
+Learns how the variant scores translate into probabilities of pathogenicity, following [Pejaver et al. 2022](https://doi.org/10.1016/j.ajhg.2022.10.013). It uses the missense and synonymous SNVs in a ClinVar release that have at least one star and are (likely) pathogenic or (likely) benign, leaving out variants at 1% or more in gnomAD, genes without a pathogenic record and variants that are also nonsense, frameshift or splice site changes on another transcript. REVEL and AlphaMissense are learned on missense variants, SpliceAI on synonymous ones at the last base of an exon and elsewhere, and CADD on all three groups. Each group is binned by score, and each bin gets a probability from its pathogenic and benign counts and the prior of the group. The curves are written to a TSV table, and haplodon comes with one built in that was learned on a recent ClinVar release.
+
+**Options:**
+
+- `--clinvar <path>`: Path to a ClinVar VCF for GRCh38, e.g. `clinvar.vcf.gz` from the [NCBI FTP](https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/).
+- `--features <path>`: Path to the GFF file whose CDS give the exon edges. Use MANE Select for the whole genome, since the prior of the edge group was estimated on it.
+- `--scores <score>`: Score to calibrate, one of `revel`, `alphamissense`, `spliceai` or `cadd`. Give it once per score. Only the curves of these scores are replaced. CADD needs the GeneBe Hub databases.
+- `--calibration <path>`: Path to the calibration table to update. If the file doesn't exist yet, it starts from the one built into haplodon.
+- `--genebe-store <path>`: Directory of the GeneBe Hub databases, like for `process`. Without them the scores come from the GeneBe API, which for a whole ClinVar release needs an account (`--genebe-email` and `--genebe-api-key`, or `GENEBE_EMAIL` and `GENEBE_API_KEY`). A whole ClinVar release can take more than a day of its limit, so give a `--genebe-cache` to continue where a run stopped.
+- `--genebe-cache <path>`: File that keeps the answers of the GeneBe API, so that a later run only asks for new variants.
+
+**Example:**
+
+```bash
+haplodon calibrate --clinvar clinvar.vcf.gz --features MANE.GRCh38.v1.5.ensembl_genomic.gff --scores revel --scores alphamissense --scores spliceai --calibration calibration.tsv --genebe-cache genebe_cache.duckdb
+```
+
 ### Cache
 
-Downloads the GeneBe Hub databases (REVEL, AlphaMissense, SpliceAI, CADD and gnomAD, about 100 GB) that `process` reads hg38 scores from. This requires a GeneBe account, whose email and API key are read from `GENEBE_EMAIL` and `GENEBE_API_KEY`.
+Downloads the GeneBe Hub databases (REVEL, AlphaMissense, SpliceAI, CADD and gnomAD, about 100 GB) that `process` and `calibrate` read hg38 scores from. This requires a GeneBe account, whose email and API key are read from `GENEBE_EMAIL` and `GENEBE_API_KEY`.
 
 ```bash
 haplodon cache --genebe-store path/to/genebe
@@ -125,7 +148,7 @@ haplodon peptides --features path/to/features.gff --reference path/to/reference.
 
 ### Plot
 
-Outputs the calculated scores in one TSV file with columns "transcript", "score", and per-sample likelihood columns (one column per sample).
+Outputs the calculated scores in one TSV file with the columns `transcript`, `score`, `haplotype`, the probabilities `revel_score`, `spliceai_score`, `alphamissense_score` and `cadd_score`, and per sample a frequency and a supporting reads column.
 
 **Options:**
 

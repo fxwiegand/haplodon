@@ -9,6 +9,7 @@ use std::path::Path;
 use std::thread;
 use std::time::Duration;
 
+use crate::cli::GeneBe;
 use crate::graph::duck::variant_nodes;
 use crate::graph::node::Node;
 use crate::graph::transcript::Transcript;
@@ -29,7 +30,7 @@ pub(crate) const HUB_DATABASES: [(&str, &str, Field); 6] = [
         &mut a.gnomad_genomes_af
     }),
     ("@genebe/cadd_hg38:0.0.2-1.7.0", "phred", |a| {
-        &mut a.cadd_phred
+        &mut a.cadd_score
     }),
 ];
 
@@ -43,8 +44,8 @@ pub(crate) struct VariantAnnotation {
     pub(crate) spliceai_max_score: Option<f64>,
     pub(crate) gnomad_exomes_af: Option<f64>,
     pub(crate) gnomad_genomes_af: Option<f64>,
-    /// Only in the GeneBe Hub, not in the API.
-    pub(crate) cadd_phred: Option<f64>,
+    /// PHRED score, or its probability once calibrated. Only in the GeneBe Hub, not in the API.
+    pub(crate) cadd_score: Option<f64>,
 }
 
 /// A GeneBe API response, with a warning if the variant could not be annotated.
@@ -60,14 +61,14 @@ pub(crate) struct Annotation {
     pub(crate) revel_score: Option<f64>,
     pub(crate) spliceai_score: Option<f64>,
     pub(crate) alphamissense_score: Option<f64>,
-    pub(crate) cadd_phred: Option<f64>,
+    pub(crate) cadd_score: Option<f64>,
     #[serde(default)]
     pub(crate) gnomad_frequencies: HashMap<String, Option<f64>>,
 }
 
 impl Annotation {
-    /// Aggregates the annotations of the variants of a haplotype. Missense scores only count
-    /// variants in the original frame and before the stop codon at `stop`.
+    /// Combines the probabilities of the variants of a haplotype. REVEL, AlphaMissense and CADD
+    /// only count variants in the original frame and before the stop codon at `stop`.
     pub(crate) fn from_haplotype(
         haplotype: &[Node],
         transcript: &Transcript,
@@ -104,7 +105,7 @@ impl Annotation {
             revel_score: probabilistic_or(translated.iter().map(|a| a.revel_score)),
             spliceai_score: probabilistic_or(all.iter().map(|(_, a)| a.spliceai_max_score)),
             alphamissense_score: probabilistic_or(translated.iter().map(|a| a.alphamissense_score)),
-            cadd_phred: max_score(all.iter().map(|(_, a)| a.cadd_phred)),
+            cadd_score: probabilistic_or(translated.iter().map(|a| a.cadd_score)),
             gnomad_frequencies: all
                 .iter()
                 .map(|(token, annotation)| (token.clone(), gnomad_af(annotation)))
@@ -122,7 +123,8 @@ pub(crate) enum Scores {
 
 impl Scores {
     /// The GeneBe Hub databases in the store for hg38 if they are installed, otherwise the API.
-    pub(crate) fn new(genome: Genome, store: Store, config: ClientConfig) -> Result<Self> {
+    pub(crate) fn new(genome: Genome, genebe: &GeneBe) -> Result<Self> {
+        let store = Store::new(&genebe.genebe_store);
         let installed = HUB_DATABASES
             .iter()
             .filter(|(id, _, _)| id.parse().is_ok_and(|id| store.get(&id).is_ok()))
@@ -133,7 +135,15 @@ impl Scores {
                 "GeneBe Hub databases in {} are incomplete, rerun `haplodon cache`",
                 store.root().display()
             ),
-            _ => Ok(Scores::Api(Box::new(GeneBears::new(config)?), genome)),
+            _ => {
+                let client = GeneBears::new(ClientConfig {
+                    email: genebe.genebe_email.clone(),
+                    api_key: genebe.genebe_api_key.clone(),
+                    cache_path: genebe.genebe_cache.clone(),
+                    ..Default::default()
+                })?;
+                Ok(Scores::Api(Box::new(client), genome))
+            }
         }
     }
 
@@ -142,6 +152,14 @@ impl Scores {
         match self {
             Scores::Hub(_) => HUB_DATABASES.map(|(id, _, _)| id).join(","),
             Scores::Api(_, genome) => format!("GeneBe API ({})", genome.as_str()),
+        }
+    }
+
+    /// Scores of the variants, `None` for the ones GeneBe could not annotate.
+    pub(crate) fn annotate(&self, variants: &[Variant]) -> Result<Vec<Option<VariantAnnotation>>> {
+        match self {
+            Scores::Hub(store) => lookup(variants, store),
+            Scores::Api(client, genome) => fetch(variants, *genome, client),
         }
     }
 }
@@ -170,11 +188,9 @@ pub(crate) fn annotate_coding_variants(
                 })
                 .collect_vec();
             info!("Annotating {} coding variants on {target}", variants.len());
-            let annotations = match scores {
-                Scores::Hub(store) => lookup(&variants, store)?,
-                Scores::Api(client, genome) => fetch(&variants, *genome, client)
-                    .with_context(|| format!("GeneBe failed to annotate variants on {target}"))?,
-            };
+            let annotations = scores
+                .annotate(&variants)
+                .with_context(|| format!("GeneBe failed to annotate variants on {target}"))?;
             let annotations = nodes
                 .iter()
                 .zip(annotations)
@@ -259,7 +275,7 @@ fn fetch(
         .collect())
 }
 
-fn gnomad_af(variant: &VariantAnnotation) -> Option<f64> {
+pub(crate) fn gnomad_af(variant: &VariantAnnotation) -> Option<f64> {
     max_score([variant.gnomad_exomes_af, variant.gnomad_genomes_af].into_iter())
 }
 
@@ -317,7 +333,7 @@ mod tests {
     fn annotated(score: f64) -> VariantAnnotation {
         VariantAnnotation {
             revel_score: Some(score),
-            cadd_phred: Some(score),
+            cadd_score: Some(score),
             ..Default::default()
         }
     }
@@ -443,8 +459,7 @@ mod tests {
         let stopped = Annotation::from_haplotype(&haplotype, &transcript, &annotations, Some(3));
 
         assert_eq!(stopped.revel_score, Some(0.5));
-        // CADD also counts the variant after the stop.
-        assert_eq!(stopped.cadd_phred, Some(0.8));
+        assert_eq!(stopped.cadd_score, Some(0.5));
         assert_eq!(stopped.gnomad_frequencies.len(), 2);
     }
 }
