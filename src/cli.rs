@@ -1,9 +1,10 @@
-use clap_derive::{Parser, Subcommand, ValueEnum};
+use clap_derive::{Args, Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Deserializer};
 use std::fmt::Display;
 use std::path::PathBuf;
 use std::str::FromStr;
 
+use crate::calibration::Score;
 use crate::graph::score::HaplotypeMetric;
 use crate::translation::distance::DistanceMetric;
 
@@ -82,30 +83,37 @@ pub(crate) enum Command {
         )]
         max_haplotypes_per_block: usize,
 
-        /// Optional cache file for GeneBe API responses, to reuse them across runs and stay within the API limits. Not used with the GeneBe Hub databases.
-        #[clap(long)]
-        genebe_cache: Option<PathBuf>,
-
-        /// GeneBe account email for authenticated requests. Must be given together with `--genebe-api-key` and raises the anonymous request limit.
-        #[clap(long, env = "GENEBE_EMAIL", requires = "genebe_api_key")]
-        genebe_email: Option<String>,
-
-        /// GeneBe API key for authenticated requests. Must be given together with `--genebe-email`.
-        #[clap(
-            long,
-            env = "GENEBE_API_KEY",
-            hide_env_values = true,
-            requires = "genebe_email"
-        )]
-        genebe_api_key: Option<String>,
-
         /// Genome build to use for fetching GeneBe annotations. Must be one of `hg38`, `hg19` or `t2t`.
         #[clap(long, default_value = "hg38")]
         genome_build: genebears::Genome,
 
-        /// Directory of GeneBe Hub databases as downloaded by `haplodon cache`. hg38 scores are read from there if the databases are installed, and from the GeneBe API if none are.
-        #[clap(long, env = "GENEBE_STORE", default_value_os_t = genebears::Store::default_root().unwrap_or_default())]
-        genebe_store: PathBuf,
+        /// Path to a calibration table written by `haplodon calibrate`. Defaults to the one built into haplodon.
+        #[clap(short, long)]
+        calibration: Option<PathBuf>,
+
+        #[clap(flatten)]
+        genebe: GeneBe,
+    },
+    /// Learn how the variant scores translate into probabilities of pathogenicity from ClinVar
+    Calibrate {
+        /// Path to a ClinVar VCF for GRCh38, e.g. clinvar.vcf.gz from the NCBI FTP.
+        #[clap(long)]
+        clinvar: PathBuf,
+
+        /// Path to the gff file whose CDS give the exon edges. Use MANE Select for the whole genome, since the prior of the edge group was estimated on it.
+        #[clap(short, long)]
+        features: PathBuf,
+
+        /// Score to calibrate, given once per score. Only the curves of these scores are replaced. CADD needs the GeneBe Hub databases.
+        #[clap(short, long, required = true)]
+        scores: Vec<Score>,
+
+        /// Path to the calibration table to update. If the file doesn't exist yet, it starts from the one built into haplodon.
+        #[clap(short, long)]
+        calibration: PathBuf,
+
+        #[clap(flatten)]
+        genebe: GeneBe,
     },
     /// Download the GeneBe Hub databases that hg38 scores are read from
     Cache {
@@ -197,12 +205,29 @@ pub(crate) enum Command {
     },
 }
 
-/// GeneBe credentials for authenticated API requests. Only ever constructed when
-/// both email and API key are present, so its existence guarantees a complete pair.
-#[derive(Debug, Clone)]
-pub(crate) struct GeneBeCredentials {
-    pub(crate) email: String,
-    pub(crate) api_key: String,
+/// Where the variant scores come from.
+#[derive(Args, Debug)]
+pub(crate) struct GeneBe {
+    /// Optional cache file for GeneBe API responses, to reuse them across runs and stay within the API limits. Not used with the GeneBe Hub databases.
+    #[clap(long)]
+    pub(crate) genebe_cache: Option<PathBuf>,
+
+    /// GeneBe account email for authenticated requests. Must be given together with `--genebe-api-key` and raises the anonymous request limit.
+    #[clap(long, env = "GENEBE_EMAIL", requires = "genebe_api_key")]
+    pub(crate) genebe_email: Option<String>,
+
+    /// GeneBe API key for authenticated requests. Must be given together with `--genebe-email`.
+    #[clap(
+        long,
+        env = "GENEBE_API_KEY",
+        hide_env_values = true,
+        requires = "genebe_email"
+    )]
+    pub(crate) genebe_api_key: Option<String>,
+
+    /// Directory of GeneBe Hub databases as downloaded by `haplodon cache`. hg38 scores are read from there if the databases are installed, and from the GeneBe API if none are.
+    #[clap(long, env = "GENEBE_STORE", default_value_os_t = genebears::Store::default_root().unwrap_or_default())]
+    pub(crate) genebe_store: PathBuf,
 }
 
 #[derive(Debug, Clone)]
