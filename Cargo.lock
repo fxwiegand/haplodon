@@ -4095,9 +4095,9 @@ dependencies = [
 
 [[package]]
 name = "varlociraptor"
-version = "8.12.0"
+version = "8.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6590c26a5f403c3ca05ef69fd1154bb85cf41f234b7825d4a0c251510e32c599"
+checksum = "6b4cf39a78a91c48c91ee7a799812fa86d560ea594cc3b646edb411a797de1d1"
 dependencies = [
  "GSL",
  "aho-corasick",
