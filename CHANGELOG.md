@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.21.0](https://github.com/fxwiegand/haplodon/compare/v0.20.1...v0.21.0) (2026-11-19)
+
+
+### ⚠ BREAKING CHANGES
+
+* Combine calibrated probabilities instead of raw scores ([#343](https://github.com/fxwiegand/haplodon/issues/343))
+
+### Features
+
+* Combine calibrated probabilities instead of raw scores ([#343](https://github.com/fxwiegand/haplodon/issues/343)) ([74f42a1](https://github.com/fxwiegand/haplodon/commit/74f42a140c1a14155ab2a3e676f132cb33b7c8fd))
+
+
+### Miscellaneous Chores
+
+* Release 0.21.0 ([d6136d7](https://github.com/fxwiegand/haplodon/commit/d6136d75e9f2a78b16eff9da89c1225942ee6384))
+
 ## [0.20.1](https://github.com/fxwiegand/haplodon/compare/v0.20.0...v0.20.1) (2026-11-02)
 
 
